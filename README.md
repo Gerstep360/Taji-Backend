@@ -19,6 +19,19 @@ Plataforma backend desarrollada con **Django 5**, **Django REST Framework (DRF)*
 
 ---
 
+## Base REST y Swagger (T003 / T058)
+
+- DRF usa JSON, autenticación JWT/cookie, permisos autenticados por defecto y throttling por operación.
+- Los listados usan paginación por página (`page`, `page_size`, máximo 100).
+- Todos los errores siguen `{"error":{"code","message","fields?"}}`.
+- Swagger UI: `http://localhost:8000/api/v1/docs/`.
+- OpenAPI: `http://localhost:8000/api/v1/openapi/`.
+- El contrato completo está en `docs/API.md`.
+
+El registro crea `Person` y `User` dentro de una transacción, normaliza el correo, valida nombres/teléfono/contraseña y controla conflictos concurrentes sin dejar datos huérfanos.
+
+---
+
 ## Requisitos Previos
 
 - **Python 3.10+** (recomendado Python 3.11 o 3.12)

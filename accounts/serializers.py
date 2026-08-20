@@ -1,7 +1,8 @@
 from django.contrib.auth import password_validation
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
+from .exceptions import RegistrationUnavailable
 from .models import Person, Role, User
 
 
@@ -24,8 +25,24 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
-    password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
+    first_name = serializers.CharField(
+        min_length=2, max_length=100, trim_whitespace=True
+    )
+    last_name = serializers.CharField(
+        min_length=2, max_length=120, trim_whitespace=True
+    )
+    phone = serializers.RegexField(
+        regex=r"^\+?[0-9 ()-]{7,25}$",
+        required=False,
+        allow_blank=True,
+        error_messages={"invalid": "Ingresa un teléfono válido."},
+    )
+    password = serializers.CharField(
+        write_only=True, min_length=10, max_length=128, trim_whitespace=False
+    )
+    password_confirm = serializers.CharField(
+        write_only=True, min_length=10, max_length=128, trim_whitespace=False
+    )
 
     class Meta:
         model = User
@@ -48,23 +65,36 @@ class RegisterSerializer(serializers.ModelSerializer):
         password_validation.validate_password(attrs["password"], candidate)
         return attrs
 
-    @transaction.atomic
     def create(self, validated_data):
-        validated_data.pop("password_confirm")
-        password = validated_data.pop("password")
-        resident_role = Role.objects.get(slug="residente", is_active=True, is_public=True)
-        person = Person.objects.create(
-            first_name=validated_data["first_name"],
-            last_name=validated_data["last_name"],
-            phone=validated_data.get("phone", ""),
-            contact_email=validated_data["email"],
-        )
-        return User.objects.create_user(
-            password=password,
-            role=resident_role,
-            person=person,
-            **validated_data,
-        )
+        data = dict(validated_data)
+        data.pop("password_confirm")
+        password = data.pop("password")
+        resident_role = Role.objects.filter(
+            slug="residente", is_active=True, is_public=True
+        ).first()
+        if resident_role is None:
+            raise RegistrationUnavailable()
+
+        try:
+            with transaction.atomic():
+                person = Person.objects.create(
+                    first_name=data["first_name"],
+                    last_name=data["last_name"],
+                    phone=data.get("phone", ""),
+                    contact_email=data["email"],
+                )
+                return User.objects.create_user(
+                    password=password,
+                    role=resident_role,
+                    person=person,
+                    **data,
+                )
+        except IntegrityError as error:
+            if User.objects.filter(email__iexact=data["email"]).exists():
+                raise serializers.ValidationError(
+                    {"email": ["Ya existe una cuenta con este correo."]}
+                ) from error
+            raise
 
 
 class LoginSerializer(serializers.Serializer):
