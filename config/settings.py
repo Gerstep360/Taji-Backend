@@ -66,7 +66,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": env.db(
         "DATABASE_URL",
-        default="postgresql://postgres:[Password_DB]@localhost:5432/taji",
+        default="postgresql://postgres:root@localhost:5432/taji",
     )
 }
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)

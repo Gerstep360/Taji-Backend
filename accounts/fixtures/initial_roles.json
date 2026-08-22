@@ -1,0 +1,83 @@
+[
+  {
+    "model": "accounts.systempermission",
+    "pk": 1,
+    "fields": {
+      "code": "admin_access",
+      "name": "Acceso Total Administrador",
+      "description": "Permite acceso general y administración completa de la plataforma",
+      "module": "admin",
+      "is_active": true
+    }
+  },
+  {
+    "model": "accounts.systempermission",
+    "pk": 2,
+    "fields": {
+      "code": "access_control_manage",
+      "name": "Gestión de Accesos",
+      "description": "Permite registrar visitas, escanear QR y controlar garita",
+      "module": "security",
+      "is_active": true
+    }
+  },
+  {
+    "model": "accounts.systempermission",
+    "pk": 3,
+    "fields": {
+      "code": "resident_app_use",
+      "name": "Uso de App Móvil",
+      "description": "Permite generar invitaciones QR y ver comunicados",
+      "module": "community",
+      "is_active": true
+    }
+  },
+  {
+    "model": "accounts.role",
+    "pk": 1,
+    "fields": {
+      "slug": "administrador",
+      "name": "Administrador",
+      "description": "Acceso total al sistema y gestión global del condominio",
+      "is_public": false,
+      "is_active": true,
+      "permissions": [1, 2, 3]
+    }
+  },
+  {
+    "model": "accounts.role",
+    "pk": 2,
+    "fields": {
+      "slug": "directiva",
+      "name": "Directiva",
+      "description": "Acceso a finanzas, reportes y supervisión",
+      "is_public": false,
+      "is_active": true,
+      "permissions": [1]
+    }
+  },
+  {
+    "model": "accounts.role",
+    "pk": 3,
+    "fields": {
+      "slug": "residente",
+      "name": "Residente",
+      "description": "Acceso a la app móvil, gestión de invitados QR y consultas",
+      "is_public": true,
+      "is_active": true,
+      "permissions": [3]
+    }
+  },
+  {
+    "model": "accounts.role",
+    "pk": 4,
+    "fields": {
+      "slug": "seguridad",
+      "name": "Seguridad",
+      "description": "Acceso a la app móvil de garita, lector QR y turnos",
+      "is_public": false,
+      "is_active": true,
+      "permissions": [2]
+    }
+  }
+]
