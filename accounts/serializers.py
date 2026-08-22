@@ -16,6 +16,9 @@ class RoleSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     role = RoleSerializer(read_only=True)
     full_name = serializers.CharField(read_only=True)
+    first_name = serializers.CharField(source="person.first_name", read_only=True)
+    last_name = serializers.CharField(source="person.last_name", read_only=True)
+    phone = serializers.CharField(source="person.phone", read_only=True)
 
     class Meta:
         model = User
@@ -24,6 +27,9 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(max_length=100)
+    last_name = serializers.CharField(max_length=120)
+    phone = serializers.CharField(max_length=25, required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
 
@@ -42,6 +48,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"password_confirm": "Las contraseñas no coinciden."})
         candidate = User(
             email=attrs.get("email", ""),
+        )
+        candidate.person = Person(
             first_name=attrs.get("first_name", ""),
             last_name=attrs.get("last_name", ""),
         )
@@ -52,11 +60,15 @@ class RegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
+        first_name = validated_data.pop("first_name")
+        last_name = validated_data.pop("last_name")
+        phone = validated_data.pop("phone", "")
+
         resident_role = Role.objects.get(slug="residente", is_active=True, is_public=True)
         person = Person.objects.create(
-            first_name=validated_data["first_name"],
-            last_name=validated_data["last_name"],
-            phone=validated_data.get("phone", ""),
+            first_name=first_name,
+            last_name=last_name,
+            phone=phone,
             contact_email=validated_data["email"],
         )
         return User.objects.create_user(

@@ -1,4 +1,4 @@
-﻿from django.contrib.auth.base_user import BaseUserManager
+from django.contrib.auth.base_user import BaseUserManager
 
 
 class UserManager(BaseUserManager):
@@ -8,6 +8,22 @@ class UserManager(BaseUserManager):
         if not email:
             raise ValueError("El correo electrónico es obligatorio.")
         email = self.normalize_email(email).lower()
+
+        # Pop personal fields to prevent passing them to the User model constructor
+        first_name = extra_fields.pop("first_name", None)
+        last_name = extra_fields.pop("last_name", None)
+        phone = extra_fields.pop("phone", None)
+
+        if "person" not in extra_fields or extra_fields["person"] is None:
+            from .models import Person
+            person = Person.objects.create(
+                first_name=first_name or ("Admin" if extra_fields.get("is_superuser") else "Usuario"),
+                last_name=last_name or "Sistema",
+                phone=phone or "",
+                contact_email=email,
+            )
+            extra_fields["person"] = person
+
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
