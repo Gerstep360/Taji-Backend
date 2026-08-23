@@ -160,7 +160,16 @@ class AuthApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertNotIn("email", response.data["detail"].lower())
+        self.assertEqual(response.data["detail"], "Intento fallido. Te quedan 4 intentos.")
+
+    def test_unknown_email_keeps_generic_login_error(self):
+        response = self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "missing@example.com", "password": "incorrecta", "client": "mobile"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(response.data["detail"], "Correo o contraseña incorrectos.")
 
     def test_fifth_failed_login_locks_account_for_thirty_minutes(self):
         cache.clear()

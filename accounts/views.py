@@ -99,8 +99,9 @@ class LoginView(generics.GenericAPIView):
         )
         if user is None or not user.is_active:
             failures_count = failures.count() + 1
+            known_user = User.objects.filter(email=email).first()
             LoginAttempt.objects.create(
-                user=user if user and user.is_active else User.objects.filter(email=email).first(),
+                user=user if user and user.is_active else known_user,
                 email=email,
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
@@ -110,7 +111,11 @@ class LoginView(generics.GenericAPIView):
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                     headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
                 )
-            return Response({"detail": GENERIC_LOGIN_ERROR}, status=status.HTTP_401_UNAUTHORIZED)
+            detail = GENERIC_LOGIN_ERROR
+            if known_user and known_user.is_active:
+                remaining = LOGIN_MAX_FAILURES - failures_count
+                detail = f"Intento fallido. Te quedan {remaining} intentos."
+            return Response({"detail": detail}, status=status.HTTP_401_UNAUTHORIZED)
 
         LoginAttempt.objects.create(
             user=user,
