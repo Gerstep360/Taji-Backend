@@ -111,10 +111,13 @@ class LoginView(generics.GenericAPIView):
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                     headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
                 )
-            detail = GENERIC_LOGIN_ERROR
-            if known_user and known_user.is_active:
+            if known_user is None:
+                detail = "Usuario no encontrado o no registrado."
+            elif known_user.is_active:
                 remaining = LOGIN_MAX_FAILURES - failures_count
                 detail = f"Intento fallido. Te quedan {remaining} intentos."
+            else:
+                detail = "Usuario no encontrado o no registrado."
             return Response({"detail": detail}, status=status.HTTP_401_UNAUTHORIZED)
 
         LoginAttempt.objects.create(
