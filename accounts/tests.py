@@ -1,4 +1,5 @@
 ﻿from django.contrib.auth.tokens import default_token_generator
+from django.core.cache import cache
 from django.core import mail
 from django.test import override_settings
 from django.utils.encoding import force_bytes
@@ -7,7 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Role, SystemPermission, User
+from .models import LoginAttempt, Role, SystemPermission, User
 
 
 PASSWORD = "TajiSeguro2026!"
@@ -160,3 +161,23 @@ class AuthApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertNotIn("email", response.data["detail"].lower())
+
+    def test_fifth_failed_login_locks_account_for_thirty_minutes(self):
+        cache.clear()
+        payload = {"email": self.user.email, "password": "incorrecta", "client": "web"}
+
+        for attempt in range(4):
+            response = self.client.post("/api/v1/auth/login/", payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED, attempt)
+
+        fifth = self.client.post("/api/v1/auth/login/", payload, format="json")
+        self.assertEqual(fifth.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(fifth["Retry-After"], "1800")
+
+        valid = self.client.post(
+            "/api/v1/auth/login/",
+            {"email": self.user.email, "password": PASSWORD, "client": "web"},
+            format="json",
+        )
+        self.assertEqual(valid.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(LoginAttempt.objects.filter(user=self.user, was_successful=False).count(), 5)

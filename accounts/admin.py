@@ -1,7 +1,7 @@
 ﻿from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Role, SystemPermission, User
+from .models import LoginAttempt, Role, SystemPermission, User
 
 
 @admin.register(SystemPermission)
@@ -32,6 +32,14 @@ class UserAdmin(BaseUserAdmin):
         ("Permisos Django", {"fields": ("groups", "user_permissions"), "classes": ("collapse",)}),
         ("Fechas", {"fields": ("last_login", "date_joined", "updated_at")}),
     )
+
+
+@admin.register(LoginAttempt)
+class LoginAttemptAdmin(admin.ModelAdmin):
+    list_display = ("email", "user", "was_successful", "ip_address", "created_at")
+    list_filter = ("was_successful", "created_at")
+    search_fields = ("email", "ip_address")
+    readonly_fields = ("user", "email", "ip_address", "was_successful", "created_at")
     add_fieldsets = (
         (
             None,
