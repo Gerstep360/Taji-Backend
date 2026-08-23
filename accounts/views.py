@@ -8,6 +8,7 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils import timezone
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
@@ -25,7 +26,7 @@ from .api_serializers import (
     RegisterResponseSerializer,
 )
 from .cookies import clear_auth_cookies, set_auth_cookies
-from .models import User
+from .models import LoginAttempt, User
 from .serializers import (
     ForgotPasswordSerializer,
     LoginSerializer,
@@ -41,6 +42,8 @@ GENERIC_LOGIN_ERROR = "Correo o contraseña incorrectos."
 GENERIC_RESET_MESSAGE = (
     "Si existe una cuenta con ese correo, recibirás instrucciones para restablecer tu contraseña."
 )
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_MINUTES = 30
 
 VALIDATION_RESPONSE = OpenApiResponse(
     ErrorResponseSerializer, description="Datos inválidos. Revisa error.fields."
@@ -149,7 +152,13 @@ class LoginView(generics.GenericAPIView):
                 remaining = LOGIN_MAX_FAILURES - failures_count
                 detail = f"Intento fallido. Te quedan {remaining} intentos."
             return Response(
-                {"detail": detail},
+                {
+                    "detail": detail,
+                    "error": {
+                        "code": "authentication_failed",
+                        "message": GENERIC_LOGIN_ERROR,
+                    },
+                },
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
