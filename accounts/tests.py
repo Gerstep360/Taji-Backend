@@ -64,7 +64,13 @@ class AuthApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"]["code"], "validation_error")
-        self.assertIn("email", response.data["error"]["fields"])
+        self.assertEqual(
+            response.data["error"]["fields"]["email"],
+            [
+                "Este correo ya tiene una cuenta. Inicia sesión o recupera tu "
+                "contraseña."
+            ],
+        )
 
     def test_registration_validation_has_uniform_field_errors(self):
         response = self.client.post(

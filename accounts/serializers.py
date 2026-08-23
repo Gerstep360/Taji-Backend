@@ -25,6 +25,17 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    # Keep the public error independent from the database's default validator.
+    # Uniqueness is checked case-insensitively below and protected again in create().
+    email = serializers.EmailField(
+        max_length=254,
+        validators=[],
+        error_messages={
+            "blank": "Ingresa tu correo electrónico.",
+            "invalid": "Ingresa un correo electrónico válido.",
+        },
+    )
+
     first_name = serializers.CharField(
         min_length=2, max_length=100, trim_whitespace=True
     )
@@ -51,7 +62,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         value = value.strip().lower()
         if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("Ya existe una cuenta con este correo.")
+            raise serializers.ValidationError(
+                "Este correo ya tiene una cuenta. Inicia sesión o recupera tu contraseña."
+            )
         return value
 
     def validate(self, attrs):
