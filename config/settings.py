@@ -98,7 +98,7 @@ FRONTEND_URLS = env.list(
 CORS_ALLOWED_ORIGINS = FRONTEND_URLS
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = (
-    [r"^http://(?:localhost|127\\.0\\.0\\.1|(?:\\d{1,3}\\.){3}\\d{1,3}):4200$"]
+    [r"^http://(?:localhost|127\.0\.0\.1|(?:\d{1,3}\.){3}\d{1,3}):4200$"]
     if DEBUG
     else []
 )
@@ -107,6 +107,11 @@ CSRF_TRUSTED_ORIGINS = FRONTEND_URLS
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["accounts.authentication.CookieJWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "DEFAULT_PAGINATION_CLASS": "config.api.TajiPageNumberPagination",
+    "PAGE_SIZE": 20,
+    "EXCEPTION_HANDLER": "config.api.taji_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {
@@ -145,10 +150,19 @@ CSRF_COOKIE_SECURE = AUTH_COOKIE_SECURE
 X_FRAME_OPTIONS = "DENY"
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Taji Auth API",
-    "DESCRIPTION": "API de autenticación y RBAC para la plataforma Taji.",
+    "TITLE": "Taji API",
+    "DESCRIPTION": (
+        "API REST de Taji para autenticación, RBAC y los módulos del condominio. "
+        "La aplicación móvil usa Bearer JWT y la web cookies HttpOnly."
+    ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "TAGS": [
+        {"name": "Autenticación", "description": "Registro y ciclo de sesión."},
+        {"name": "Sistema", "description": "Salud y metadatos del servicio."},
+    ],
 }
 
 

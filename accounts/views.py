@@ -1,4 +1,4 @@
-﻿from urllib.parse import urlencode
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import authenticate, password_validation
@@ -7,9 +7,8 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.mail import send_mail
 from django.db import transaction
 from django.utils.encoding import force_bytes
-from django.utils import timezone
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -17,8 +16,16 @@ from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, Ou
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
+from .api_serializers import (
+    ErrorResponseSerializer,
+    LoginResponseSerializer,
+    MeResponseSerializer,
+    MessageResponseSerializer,
+    RefreshResponseSerializer,
+    RegisterResponseSerializer,
+)
 from .cookies import clear_auth_cookies, set_auth_cookies
-from .models import LoginAttempt, User
+from .models import User
 from .serializers import (
     ForgotPasswordSerializer,
     LoginSerializer,
@@ -34,8 +41,13 @@ GENERIC_LOGIN_ERROR = "Correo o contraseña incorrectos."
 GENERIC_RESET_MESSAGE = (
     "Si existe una cuenta con ese correo, recibirás instrucciones para restablecer tu contraseña."
 )
-LOGIN_MAX_FAILURES = 5
-LOGIN_LOCKOUT_MINUTES = 30
+
+VALIDATION_RESPONSE = OpenApiResponse(
+    ErrorResponseSerializer, description="Datos inválidos. Revisa error.fields."
+)
+AUTH_ERROR_RESPONSE = OpenApiResponse(
+    ErrorResponseSerializer, description="Credenciales o sesión inválidas."
+)
 
 
 def token_pair_for_user(user):
@@ -49,10 +61,21 @@ class RegisterView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "register"
 
-    @extend_schema(request=RegisterSerializer, responses={201: UserSerializer})
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Registrar residente",
+        request=RegisterSerializer,
+        responses={
+            201: RegisterResponseSerializer,
+            400: VALIDATION_RESPONSE,
+            503: OpenApiResponse(
+                ErrorResponseSerializer, description="Registro no disponible."
+            ),
+        },
+    )
     @transaction.atomic
     def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         return Response(
@@ -67,9 +90,18 @@ class LoginView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "login"
 
-    @extend_schema(request=LoginSerializer)
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Iniciar sesión",
+        request=LoginSerializer,
+        responses={
+            200: LoginResponseSerializer,
+            400: VALIDATION_RESPONSE,
+            401: AUTH_ERROR_RESPONSE,
+        },
+    )
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
         cutoff = timezone.now() - timezone.timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
@@ -111,14 +143,15 @@ class LoginView(generics.GenericAPIView):
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                     headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
                 )
-            if known_user is None:
+            if known_user is None or not known_user.is_active:
                 detail = "Usuario no encontrado o no registrado. Regístrate para continuar."
-            elif known_user.is_active:
+            else:
                 remaining = LOGIN_MAX_FAILURES - failures_count
                 detail = f"Intento fallido. Te quedan {remaining} intentos."
-            else:
-                detail = "Usuario no encontrado o no registrado. Regístrate para continuar."
-            return Response({"detail": detail}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"detail": detail},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         LoginAttempt.objects.create(
             user=user,
@@ -140,29 +173,60 @@ class RefreshView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "token_refresh"
 
-    @extend_schema(request=RefreshSerializer)
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Renovar sesión",
+        request=RefreshSerializer,
+        responses={
+            200: RefreshResponseSerializer,
+            400: VALIDATION_RESPONSE,
+            401: AUTH_ERROR_RESPONSE,
+        },
+    )
     def post(self, request):
-        serializer = RefreshSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         client = serializer.validated_data["client"]
         raw_refresh = serializer.validated_data.get("refresh") or request.COOKIES.get(
             settings.AUTH_COOKIE_REFRESH
         )
         if not raw_refresh:
-            return Response({"detail": "La sesión no se puede renovar."}, status=status.HTTP_401_UNAUTHORIZED)
+            return clear_auth_cookies(
+                Response(
+                    {
+                        "error": {
+                            "code": "authentication_failed",
+                            "message": "La sesión no se puede renovar.",
+                        }
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+            )
 
         refresh_serializer = TokenRefreshSerializer(data={"refresh": raw_refresh})
         try:
             refresh_serializer.is_valid(raise_exception=True)
         except Exception:
             return clear_auth_cookies(
-                Response({"detail": "La sesión expiró. Inicia sesión nuevamente."}, status=status.HTTP_401_UNAUTHORIZED)
+                Response(
+                    {
+                        "error": {
+                            "code": "authentication_failed",
+                            "message": "La sesión expiró. Inicia sesión nuevamente.",
+                        }
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             )
 
         tokens = refresh_serializer.validated_data
         if client == "mobile":
             return Response({"tokens": tokens})
-        return set_auth_cookies(Response({"message": "Sesión renovada."}), tokens["access"], tokens.get("refresh"))
+        return set_auth_cookies(
+            Response({"message": "Sesión renovada."}),
+            tokens["access"],
+            tokens.get("refresh"),
+        )
 
 
 class LogoutView(generics.GenericAPIView):
@@ -170,8 +234,16 @@ class LogoutView(generics.GenericAPIView):
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
 
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Cerrar sesión",
+        request=LogoutSerializer,
+        responses={204: None},
+    )
     def post(self, request):
-        raw_refresh = request.data.get("refresh") or request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
+        raw_refresh = request.data.get("refresh") or request.COOKIES.get(
+            settings.AUTH_COOKIE_REFRESH
+        )
         if raw_refresh:
             try:
                 RefreshToken(raw_refresh).blacklist()
@@ -182,6 +254,12 @@ class LogoutView(generics.GenericAPIView):
 
 class MeView(generics.GenericAPIView):
     serializer_class = UserSerializer
+
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Consultar sesión activa",
+        responses={200: MeResponseSerializer, 401: AUTH_ERROR_RESPONSE},
+    )
     def get(self, request):
         return Response({"user": UserSerializer(request.user).data})
 
@@ -192,9 +270,14 @@ class ForgotPasswordView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "password_reset"
 
-    @extend_schema(request=ForgotPasswordSerializer)
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Solicitar recuperación de contraseña",
+        request=ForgotPasswordSerializer,
+        responses={200: MessageResponseSerializer, 400: VALIDATION_RESPONSE},
+    )
     def post(self, request):
-        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
         user = User.objects.filter(email__iexact=email, is_active=True).first()
@@ -224,10 +307,15 @@ class ResetPasswordView(generics.GenericAPIView):
     permission_classes = [permissions.AllowAny]
     throttle_scope = "password_reset"
 
-    @extend_schema(request=ResetPasswordSerializer)
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Restablecer contraseña",
+        request=ResetPasswordSerializer,
+        responses={200: MessageResponseSerializer, 400: VALIDATION_RESPONSE},
+    )
     @transaction.atomic
     def post(self, request):
-        serializer = ResetPasswordSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
@@ -237,11 +325,10 @@ class ResetPasswordView(generics.GenericAPIView):
         except (ValueError, TypeError, OverflowError, User.DoesNotExist):
             user = None
 
-        if user is None or not default_token_generator.check_token(user, data["token"]):
-            return Response(
-                {"detail": "El enlace no es válido o ya expiró."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if user is None or not default_token_generator.check_token(
+            user, data["token"]
+        ):
+            raise serializers.ValidationError({"token": ["El enlace no es válido o ya expiró."]})
 
         try:
             password_validation.validate_password(data["password"], user)
