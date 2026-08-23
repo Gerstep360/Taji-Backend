@@ -169,7 +169,10 @@ class AuthApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertEqual(response.data["detail"], "Usuario no encontrado o no registrado.")
+        self.assertEqual(
+            response.data["detail"],
+            "Usuario no encontrado o no registrado. Regístrate para continuar.",
+        )
 
     def test_fifth_failed_login_locks_account_for_thirty_minutes(self):
         cache.clear()
