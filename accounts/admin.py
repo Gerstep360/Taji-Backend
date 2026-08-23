@@ -1,7 +1,16 @@
 ﻿from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Role, SystemPermission, User
+from .models import Person, Role, SystemPermission, User
+
+
+@admin.register(Person)
+class PersonAdmin(admin.ModelAdmin):
+    list_display = ("full_name", "document_type", "document_number", "phone", "is_active")
+    list_filter = ("document_type", "is_active")
+    search_fields = ("first_name", "last_name", "document_number", "contact_email", "phone")
+    ordering = ("last_name", "first_name")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(SystemPermission)
