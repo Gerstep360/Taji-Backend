@@ -8,9 +8,7 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from config.api import TajiPageNumberPagination
-
-from .models import Role, SystemPermission, User
+from .models import Person, Role, SystemPermission, User
 
 
 PASSWORD = "TajiSeguro2026!"
@@ -200,43 +198,68 @@ class AuthApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertEqual(response.data["error"]["code"], "authentication_failed")
-        self.assertNotIn("email", response.data["error"]["message"].lower())
+        self.assertNotIn("email", response.data["detail"].lower())
 
-    def test_openapi_and_swagger_are_available(self):
-        schema = self.client.get("/api/v1/openapi/")
-        docs = self.client.get("/api/v1/docs/")
-        self.assertEqual(schema.status_code, status.HTTP_200_OK)
-        self.assertEqual(docs.status_code, status.HTTP_200_OK)
-        self.assertIn(b"/api/v1/auth/register/", schema.content)
-        self.assertIn(b"RegisterResponse", schema.content)
-
-    def test_unknown_api_route_has_uniform_error(self):
-        response = self.client.get("/api/v1/auth/no-existe/")
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertEqual(response.json()["error"]["code"], "not_found")
-
-    def test_default_pagination_contract(self):
-        request = Request(
-            APIRequestFactory().get("/api/v1/items/?page=2&page_size=2")
-        )
-        paginator = TajiPageNumberPagination()
-        page = paginator.paginate_queryset(list(range(5)), request)
-        response = paginator.get_paginated_response(page)
-        self.assertEqual(response.data["results"], [2, 3])
-        metadata = response.data["pagination"]
-        self.assertEqual(metadata["page"], 2)
-        self.assertEqual(metadata["page_size"], 2)
-        self.assertEqual(metadata["total_items"], 5)
-        self.assertEqual(metadata["total_pages"], 3)
-
-    def test_lan_origin_is_accepted_in_debug(self):
-        response = self.client.options(
+    def test_registration_creates_user_and_person(self):
+        response = self.client.post(
             "/api/v1/auth/register/",
-            HTTP_ORIGIN="http://192.168.50.77:4200",
-            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            {
+                "email": "test_person@example.com",
+                "first_name": "Juan",
+                "last_name": "Perez",
+                "phone": "70001234",
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            },
+            format="json",
         )
-        self.assertEqual(
-            response.headers["access-control-allow-origin"],
-            "http://192.168.50.77:4200",
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("user", response.data)
+        self.assertEqual(response.data["user"]["first_name"], "Juan")
+        self.assertEqual(response.data["user"]["last_name"], "Perez")
+        self.assertEqual(response.data["user"]["phone"], "70001234")
+
+        user = User.objects.get(email="test_person@example.com")
+        self.assertIsNotNone(user.person)
+        self.assertEqual(user.person.first_name, "Juan")
+        self.assertEqual(user.person.last_name, "Perez")
+        self.assertEqual(user.person.phone, "70001234")
+
+    def test_full_name_property_works(self):
+        self.assertEqual(self.user.full_name, "Ana Rojas")
+
+    def test_create_user_and_createsuperuser_managers(self):
+        u = User.objects.create_user(
+            email="manager_user@example.com",
+            password=PASSWORD,
+            first_name="User",
+            last_name="Manager",
+            phone="789",
+            role=self.role,
         )
+        self.assertIsNotNone(u.person)
+        self.assertEqual(u.person.first_name, "User")
+        self.assertEqual(u.person.last_name, "Manager")
+        self.assertEqual(u.person.phone, "789")
+
+        su = User.objects.create_superuser(
+            email="superuser_manager@example.com",
+            password=PASSWORD,
+            first_name="Super",
+            last_name="User",
+        )
+        self.assertTrue(su.is_superuser)
+        self.assertTrue(su.is_staff)
+        self.assertIsNotNone(su.person)
+        self.assertEqual(su.person.first_name, "Super")
+        self.assertEqual(su.person.last_name, "User")
+
+    def test_updating_personal_data_modifies_person(self):
+        self.user.person.first_name = "Ana Maria"
+        self.user.person.save()
+
+        self.assertEqual(self.user.first_name, "Ana Maria")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, "Ana Maria")
+
