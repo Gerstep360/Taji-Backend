@@ -4,7 +4,8 @@ from django.test import override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.request import Request
+from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Person, Role, SystemPermission, User
@@ -60,6 +61,44 @@ class AuthApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"]["code"], "validation_error")
+        self.assertEqual(
+            response.data["error"]["fields"]["email"],
+            [
+                "Este correo ya tiene una cuenta. Inicia sesión o recupera tu "
+                "contraseña."
+            ],
+        )
+
+    def test_registration_validation_has_uniform_field_errors(self):
+        response = self.client.post(
+            "/api/v1/auth/register/",
+            {
+                "email": "correo-invalido",
+                "first_name": "A",
+                "last_name": "",
+                "phone": "abc",
+                "password": "corta",
+                "password_confirm": "distinta",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data,
+            {
+                "error": {
+                    "code": "validation_error",
+                    "message": "Revisa los campos indicados.",
+                    "fields": response.data["error"]["fields"],
+                }
+            },
+        )
+        self.assertTrue(
+            {"email", "first_name", "last_name", "phone", "password"}.issubset(
+                response.data["error"]["fields"]
+            )
+        )
 
     def test_mobile_login_returns_tokens_and_bearer_opens_profile(self):
         response = self.client.post(

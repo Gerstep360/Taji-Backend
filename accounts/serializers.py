@@ -1,7 +1,8 @@
 from django.contrib.auth import password_validation
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
+from .exceptions import RegistrationUnavailable
 from .models import Person, Role, User
 
 
@@ -40,7 +41,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         value = value.strip().lower()
         if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("Ya existe una cuenta con este correo.")
+            raise serializers.ValidationError(
+                "Este correo ya tiene una cuenta. Inicia sesión o recupera tu contraseña."
+            )
         return value
 
     def validate(self, attrs):
@@ -56,7 +59,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         password_validation.validate_password(attrs["password"], candidate)
         return attrs
 
-    @transaction.atomic
     def create(self, validated_data):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
