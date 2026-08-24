@@ -28,11 +28,32 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    first_name = serializers.CharField(max_length=100)
-    last_name = serializers.CharField(max_length=120)
-    phone = serializers.CharField(max_length=25, required=False, allow_blank=True)
-    password = serializers.CharField(write_only=True, trim_whitespace=False)
-    password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
+    email = serializers.EmailField(
+        max_length=254,
+        validators=[],
+        error_messages={
+            "blank": "Ingresa tu correo electrónico.",
+            "invalid": "Ingresa un correo electrónico válido.",
+        },
+    )
+    first_name = serializers.CharField(
+        min_length=2, max_length=100, trim_whitespace=True
+    )
+    last_name = serializers.CharField(
+        min_length=2, max_length=120, trim_whitespace=True
+    )
+    phone = serializers.RegexField(
+        regex=r"^\+?[0-9 ()-]{7,25}$",
+        required=False,
+        allow_blank=True,
+        error_messages={"invalid": "Ingresa un teléfono válido."},
+    )
+    password = serializers.CharField(
+        write_only=True, min_length=10, max_length=128, trim_whitespace=False
+    )
+    password_confirm = serializers.CharField(
+        write_only=True, min_length=10, max_length=128, trim_whitespace=False
+    )
 
     class Meta:
         model = User
@@ -60,25 +81,43 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop("password_confirm")
-        password = validated_data.pop("password")
-        first_name = validated_data.pop("first_name")
-        last_name = validated_data.pop("last_name")
-        phone = validated_data.pop("phone", "")
+        data = dict(validated_data)
+        data.pop("password_confirm")
+        password = data.pop("password")
+        first_name = data.pop("first_name")
+        last_name = data.pop("last_name")
+        phone = data.pop("phone", "")
+        resident_role = Role.objects.filter(
+            slug="residente", is_active=True, is_public=True
+        ).first()
+        if resident_role is None:
+            raise RegistrationUnavailable()
 
-        resident_role = Role.objects.get(slug="residente", is_active=True, is_public=True)
-        person = Person.objects.create(
-            first_name=first_name,
-            last_name=last_name,
-            phone=phone,
-            contact_email=validated_data["email"],
-        )
-        return User.objects.create_user(
-            password=password,
-            role=resident_role,
-            person=person,
-            **validated_data,
-        )
+        try:
+            with transaction.atomic():
+                person = Person.objects.create(
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=phone,
+                    contact_email=data["email"],
+                )
+                return User.objects.create_user(
+                    password=password,
+                    role=resident_role,
+                    person=person,
+                    **data,
+                )
+        except IntegrityError as error:
+            if User.objects.filter(email__iexact=data["email"]).exists():
+                raise serializers.ValidationError(
+                    {
+                        "email": [
+                            "Este correo ya tiene una cuenta. Inicia sesión o "
+                            "recupera tu contraseña."
+                        ]
+                    }
+                ) from error
+            raise
 
 
 class LoginSerializer(serializers.Serializer):
