@@ -1,11 +1,14 @@
-﻿from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.test import override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.request import Request
+from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from config.api import TajiPageNumberPagination
 
 from .models import Role, SystemPermission, User
 
@@ -60,6 +63,44 @@ class AuthApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"]["code"], "validation_error")
+        self.assertEqual(
+            response.data["error"]["fields"]["email"],
+            [
+                "Este correo ya tiene una cuenta. Inicia sesión o recupera tu "
+                "contraseña."
+            ],
+        )
+
+    def test_registration_validation_has_uniform_field_errors(self):
+        response = self.client.post(
+            "/api/v1/auth/register/",
+            {
+                "email": "correo-invalido",
+                "first_name": "A",
+                "last_name": "",
+                "phone": "abc",
+                "password": "corta",
+                "password_confirm": "distinta",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data,
+            {
+                "error": {
+                    "code": "validation_error",
+                    "message": "Revisa los campos indicados.",
+                    "fields": response.data["error"]["fields"],
+                }
+            },
+        )
+        self.assertTrue(
+            {"email", "first_name", "last_name", "phone", "password"}.issubset(
+                response.data["error"]["fields"]
+            )
+        )
 
     def test_mobile_login_returns_tokens_and_bearer_opens_profile(self):
         response = self.client.post(
@@ -159,4 +200,43 @@ class AuthApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-        self.assertNotIn("email", response.data["detail"].lower())
+        self.assertEqual(response.data["error"]["code"], "authentication_failed")
+        self.assertNotIn("email", response.data["error"]["message"].lower())
+
+    def test_openapi_and_swagger_are_available(self):
+        schema = self.client.get("/api/v1/openapi/")
+        docs = self.client.get("/api/v1/docs/")
+        self.assertEqual(schema.status_code, status.HTTP_200_OK)
+        self.assertEqual(docs.status_code, status.HTTP_200_OK)
+        self.assertIn(b"/api/v1/auth/register/", schema.content)
+        self.assertIn(b"RegisterResponse", schema.content)
+
+    def test_unknown_api_route_has_uniform_error(self):
+        response = self.client.get("/api/v1/auth/no-existe/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.json()["error"]["code"], "not_found")
+
+    def test_default_pagination_contract(self):
+        request = Request(
+            APIRequestFactory().get("/api/v1/items/?page=2&page_size=2")
+        )
+        paginator = TajiPageNumberPagination()
+        page = paginator.paginate_queryset(list(range(5)), request)
+        response = paginator.get_paginated_response(page)
+        self.assertEqual(response.data["results"], [2, 3])
+        metadata = response.data["pagination"]
+        self.assertEqual(metadata["page"], 2)
+        self.assertEqual(metadata["page_size"], 2)
+        self.assertEqual(metadata["total_items"], 5)
+        self.assertEqual(metadata["total_pages"], 3)
+
+    def test_lan_origin_is_accepted_in_debug(self):
+        response = self.client.options(
+            "/api/v1/auth/register/",
+            HTTP_ORIGIN="http://192.168.50.77:4200",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "http://192.168.50.77:4200",
+        )
