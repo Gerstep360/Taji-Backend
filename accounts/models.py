@@ -101,10 +101,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
     )
     email = models.EmailField(unique=True)
-    # Compatibilidad temporal con el contrato MVP. Los nuevos registros también crean Person.
-    first_name = models.CharField("nombres", max_length=100)
-    last_name = models.CharField("apellidos", max_length=120)
-    phone = models.CharField("teléfono", max_length=25, blank=True)
     role = models.ForeignKey(Role, on_delete=models.PROTECT, related_name="users", null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -115,6 +111,19 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
+
+    @property
+    def first_name(self):
+        return self.person.first_name if self.person else ""
+
+    @property
+    def last_name(self):
+        return self.person.last_name if self.person else ""
+
+    @property
+    def phone(self):
+        return self.person.phone if self.person else ""
+
 
     class Meta:
         db_table = "app_user"
@@ -134,7 +143,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     @property
     def full_name(self):
-        return f"{self.first_name} {self.last_name}".strip()
+        return self.person.full_name if self.person else ""
 
     def has_system_permission(self, code):
         if self.is_superuser:

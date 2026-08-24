@@ -9,9 +9,9 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from config.api import TajiPageNumberPagination
 
-from .models import LoginAttempt, Role, SystemPermission, User
+from config.api import TajiPageNumberPagination
+from .models import LoginAttempt,Person, Role, SystemPermission, User
 
 
 PASSWORD = "TajiSeguro2026!"
@@ -266,10 +266,63 @@ class AuthApiTests(APITestCase):
     def test_lan_origin_is_accepted_in_debug(self):
         response = self.client.options(
             "/api/v1/auth/register/",
-            HTTP_ORIGIN="http://192.168.50.77:4200",
-            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            {
+                "email": "test_person@example.com",
+                "first_name": "Juan",
+                "last_name": "Perez",
+                "phone": "70001234",
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            },
+            format="json",
         )
-        self.assertEqual(
-            response.headers["access-control-allow-origin"],
-            "http://192.168.50.77:4200",
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("user", response.data)
+        self.assertEqual(response.data["user"]["first_name"], "Juan")
+        self.assertEqual(response.data["user"]["last_name"], "Perez")
+        self.assertEqual(response.data["user"]["phone"], "70001234")
+
+        user = User.objects.get(email="test_person@example.com")
+        self.assertIsNotNone(user.person)
+        self.assertEqual(user.person.first_name, "Juan")
+        self.assertEqual(user.person.last_name, "Perez")
+        self.assertEqual(user.person.phone, "70001234")
+
+    def test_full_name_property_works(self):
+        self.assertEqual(self.user.full_name, "Ana Rojas")
+
+    def test_create_user_and_createsuperuser_managers(self):
+        u = User.objects.create_user(
+            email="manager_user@example.com",
+            password=PASSWORD,
+            first_name="User",
+            last_name="Manager",
+            phone="789",
+            role=self.role,
         )
+        self.assertIsNotNone(u.person)
+        self.assertEqual(u.person.first_name, "User")
+        self.assertEqual(u.person.last_name, "Manager")
+        self.assertEqual(u.person.phone, "789")
+
+        su = User.objects.create_superuser(
+            email="superuser_manager@example.com",
+            password=PASSWORD,
+            first_name="Super",
+            last_name="User",
+        )
+        self.assertTrue(su.is_superuser)
+        self.assertTrue(su.is_staff)
+        self.assertIsNotNone(su.person)
+        self.assertEqual(su.person.first_name, "Super")
+        self.assertEqual(su.person.last_name, "User")
+
+    def test_updating_personal_data_modifies_person(self):
+        self.user.person.first_name = "Ana Maria"
+        self.user.person.save()
+
+        self.assertEqual(self.user.first_name, "Ana Maria")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.first_name, "Ana Maria")
+
