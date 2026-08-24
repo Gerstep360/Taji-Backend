@@ -152,3 +152,22 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
+class LoginAttempt(models.Model):
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="login_attempts")
+    email = models.EmailField(db_index=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    was_successful = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "login_attempt"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=("email", "created_at"), name="idx_login_email_created"),
+        ]
+
+    def __str__(self):
+        result = "exitoso" if self.was_successful else "fallido"
+        return f"{self.email} ({result})"
