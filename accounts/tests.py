@@ -1,7 +1,12 @@
+from django.conf import settings
+from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.core.cache import cache
+from django.core.management import call_command
 from django.test import override_settings
+from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
@@ -9,9 +14,9 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-
 from config.api import TajiPageNumberPagination
-from .models import LoginAttempt,Person, Role, SystemPermission, User
+from .models import LoginAttempt, Person, Role, SystemPermission, User
+from .rbac import ROLE_DEFINITIONS
 
 
 PASSWORD = "TajiSeguro2026!"
@@ -228,6 +233,7 @@ class AuthApiTests(APITestCase):
         self.assertEqual(fifth.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertEqual(fifth["Retry-After"], "1800")
 
+        self.assertEqual(fifth.data["error"]["code"], "throttled")
         valid = self.client.post(
             "/api/v1/auth/login/",
             {"email": self.user.email, "password": PASSWORD, "client": "web"},
@@ -265,6 +271,17 @@ class AuthApiTests(APITestCase):
 
     def test_lan_origin_is_accepted_in_debug(self):
         response = self.client.options(
+            "/api/v1/auth/register/",
+            HTTP_ORIGIN="http://192.168.50.77:4200",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+        self.assertEqual(
+            response.headers["access-control-allow-origin"],
+            "http://192.168.50.77:4200",
+        )
+
+    def test_registration_creates_user_and_person(self):
+        response = self.client.post(
             "/api/v1/auth/register/",
             {
                 "email": "test_person@example.com",
@@ -325,4 +342,59 @@ class AuthApiTests(APITestCase):
 
         self.user.refresh_from_db()
         self.assertEqual(self.user.first_name, "Ana Maria")
+
+    def test_merged_backend_configuration_is_present(self):
+        expected_apps = {
+            "accounts.apps.AccountsConfig",
+            "condominiums.apps.CondominiumsConfig",
+            "auditlog.apps.AuditlogConfig",
+            "security.apps.SecurityConfig",
+            "incidents.apps.IncidentsConfig",
+            "maintenance.apps.MaintenanceConfig",
+            "community.apps.CommunityConfig",
+            "notifications.apps.NotificationsConfig",
+        }
+        self.assertTrue(expected_apps.issubset(settings.INSTALLED_APPS))
+        self.assertEqual(
+            settings.DATABASES["default"]["ENGINE"],
+            "django.db.backends.postgresql",
+        )
+        self.assertEqual(
+            settings.REST_FRAMEWORK["EXCEPTION_HANDLER"],
+            "config.api.taji_exception_handler",
+        )
+        self.assertEqual(
+            settings.REST_FRAMEWORK["DEFAULT_SCHEMA_CLASS"],
+            "drf_spectacular.openapi.AutoSchema",
+        )
+
+    def test_initial_roles_fixture_matches_the_merged_rbac_catalog(self):
+        call_command("loaddata", "initial_roles", verbosity=0)
+        self.assertEqual(Role.objects.count(), len(ROLE_DEFINITIONS))
+        self.assertEqual(SystemPermission.objects.count(), 32)
+        for slug, definition in ROLE_DEFINITIONS.items():
+            role = Role.objects.get(slug=slug)
+            self.assertEqual(role.name, definition["name"])
+            self.assertEqual(
+                set(role.permissions.values_list("code", flat=True)),
+                set(definition["permissions"]),
+            )
+
+    def test_admin_keeps_all_merged_models_and_secure_user_admin(self):
+        for model in (Person, Role, SystemPermission, User, LoginAttempt):
+            self.assertIn(model, admin.site._registry)
+        self.assertIsInstance(admin.site._registry[User], BaseUserAdmin)
+
+        superuser = User.objects.create_superuser(
+            email="admin@example.com", password=PASSWORD
+        )
+        self.client.force_login(superuser)
+        for name in (
+            "admin:index",
+            "admin:accounts_person_changelist",
+            "admin:accounts_user_changelist",
+            "admin:accounts_user_add",
+            "admin:accounts_loginattempt_changelist",
+        ):
+            self.assertEqual(self.client.get(reverse(name)).status_code, 200, name)
 

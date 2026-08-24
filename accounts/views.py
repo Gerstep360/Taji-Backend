@@ -101,6 +101,7 @@ class LoginView(generics.GenericAPIView):
             200: LoginResponseSerializer,
             400: VALIDATION_RESPONSE,
             401: AUTH_ERROR_RESPONSE,
+            429: OpenApiResponse(ErrorResponseSerializer, description="Cuenta bloqueada temporalmente."),
         },
     )
     def post(self, request):
@@ -122,7 +123,13 @@ class LoginView(generics.GenericAPIView):
             failures = failures.filter(created_at__gt=last_success.created_at)
         if failures.count() >= LOGIN_MAX_FAILURES:
             return Response(
-                {"detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar."},
+                {
+                    "detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                    "error": {
+                        "code": "throttled",
+                        "message": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                    },
+                },
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
                 headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
             )
@@ -142,7 +149,13 @@ class LoginView(generics.GenericAPIView):
             )
             if failures_count >= LOGIN_MAX_FAILURES:
                 return Response(
-                    {"detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar."},
+                    {
+                        "detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                        "error": {
+                            "code": "throttled",
+                            "message": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                        },
+                    },
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                     headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
                 )
