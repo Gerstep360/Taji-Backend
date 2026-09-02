@@ -17,6 +17,9 @@ class RoleSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     role = RoleSerializer(read_only=True)
     full_name = serializers.CharField(read_only=True)
+    first_name = serializers.CharField(source="person.first_name", read_only=True)
+    last_name = serializers.CharField(source="person.last_name", read_only=True)
+    phone = serializers.CharField(source="person.phone", read_only=True)
 
     class Meta:
         model = User
@@ -25,6 +28,14 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(
+        max_length=254,
+        validators=[],
+        error_messages={
+            "blank": "Ingresa tu correo electrónico.",
+            "invalid": "Ingresa un correo electrónico válido.",
+        },
+    )
     first_name = serializers.CharField(
         min_length=2, max_length=100, trim_whitespace=True
     )
@@ -51,7 +62,9 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         value = value.strip().lower()
         if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("Ya existe una cuenta con este correo.")
+            raise serializers.ValidationError(
+                "Este correo ya tiene una cuenta. Inicia sesión o recupera tu contraseña."
+            )
         return value
 
     def validate(self, attrs):
@@ -59,6 +72,8 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"password_confirm": "Las contraseñas no coinciden."})
         candidate = User(
             email=attrs.get("email", ""),
+        )
+        candidate.person = Person(
             first_name=attrs.get("first_name", ""),
             last_name=attrs.get("last_name", ""),
         )
@@ -69,6 +84,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         data = dict(validated_data)
         data.pop("password_confirm")
         password = data.pop("password")
+        first_name = data.pop("first_name")
+        last_name = data.pop("last_name")
+        phone = data.pop("phone", "")
         resident_role = Role.objects.filter(
             slug="residente", is_active=True, is_public=True
         ).first()
@@ -78,9 +96,9 @@ class RegisterSerializer(serializers.ModelSerializer):
         try:
             with transaction.atomic():
                 person = Person.objects.create(
-                    first_name=data["first_name"],
-                    last_name=data["last_name"],
-                    phone=data.get("phone", ""),
+                    first_name=first_name,
+                    last_name=last_name,
+                    phone=phone,
                     contact_email=data["email"],
                 )
                 return User.objects.create_user(
@@ -92,7 +110,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         except IntegrityError as error:
             if User.objects.filter(email__iexact=data["email"]).exists():
                 raise serializers.ValidationError(
-                    {"email": ["Ya existe una cuenta con este correo."]}
+                    {
+                        "email": [
+                            "Este correo ya tiene una cuenta. Inicia sesión o "
+                            "recupera tu contraseña."
+                        ]
+                    }
                 ) from error
             raise
 

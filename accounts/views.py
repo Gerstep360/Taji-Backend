@@ -8,6 +8,7 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils import timezone
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
@@ -25,7 +26,7 @@ from .api_serializers import (
     RegisterResponseSerializer,
 )
 from .cookies import clear_auth_cookies, set_auth_cookies
-from .models import User
+from .models import LoginAttempt, User
 from .serializers import (
     ForgotPasswordSerializer,
     LoginSerializer,
@@ -41,6 +42,8 @@ GENERIC_LOGIN_ERROR = "Correo o contraseña incorrectos."
 GENERIC_RESET_MESSAGE = (
     "Si existe una cuenta con ese correo, recibirás instrucciones para restablecer tu contraseña."
 )
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_MINUTES = 30
 
 VALIDATION_RESPONSE = OpenApiResponse(
     ErrorResponseSerializer, description="Datos inválidos. Revisa error.fields."
@@ -98,27 +101,86 @@ class LoginView(generics.GenericAPIView):
             200: LoginResponseSerializer,
             400: VALIDATION_RESPONSE,
             401: AUTH_ERROR_RESPONSE,
+            429: OpenApiResponse(ErrorResponseSerializer, description="Cuenta bloqueada temporalmente."),
         },
     )
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"].strip().lower()
+        cutoff = timezone.now() - timezone.timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        last_success = (
+            LoginAttempt.objects.filter(email=email, was_successful=True)
+            .order_by("-created_at")
+            .first()
+        )
+        failures = LoginAttempt.objects.filter(
+            email=email,
+            was_successful=False,
+            created_at__gte=cutoff,
+        )
+        if last_success:
+            failures = failures.filter(created_at__gt=last_success.created_at)
+        if failures.count() >= LOGIN_MAX_FAILURES:
+            return Response(
+                {
+                    "detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                    "error": {
+                        "code": "throttled",
+                        "message": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                    },
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
+            )
+
         user = authenticate(
             request=request,
-            email=serializer.validated_data["email"].strip().lower(),
+            email=email,
             password=serializer.validated_data["password"],
         )
         if user is None or not user.is_active:
+            failures_count = failures.count() + 1
+            known_user = User.objects.filter(email=email).first()
+            LoginAttempt.objects.create(
+                user=user if user and user.is_active else known_user,
+                email=email,
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+            if failures_count >= LOGIN_MAX_FAILURES:
+                return Response(
+                    {
+                        "detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                        "error": {
+                            "code": "throttled",
+                            "message": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
+                        },
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
+                )
+            if known_user is None or not known_user.is_active:
+                detail = "Usuario no encontrado o no registrado. Regístrate para continuar."
+            else:
+                remaining = LOGIN_MAX_FAILURES - failures_count
+                detail = f"Intento fallido. Te quedan {remaining} intentos."
             return Response(
                 {
+                    "detail": detail,
                     "error": {
                         "code": "authentication_failed",
                         "message": GENERIC_LOGIN_ERROR,
-                    }
+                    },
                 },
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        LoginAttempt.objects.create(
+            user=user,
+            email=email,
+            ip_address=request.META.get("REMOTE_ADDR"),
+            was_successful=True,
+        )
         tokens = token_pair_for_user(user)
         payload = {"message": "Sesión iniciada.", "user": UserSerializer(user).data}
         if serializer.validated_data["client"] == "mobile":

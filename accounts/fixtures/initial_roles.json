@@ -1,83 +1,502 @@
 [
-  {
-    "model": "accounts.systempermission",
-    "pk": 1,
-    "fields": {
-      "code": "admin_access",
-      "name": "Acceso Total Administrador",
-      "description": "Permite acceso general y administración completa de la plataforma",
-      "module": "admin",
-      "is_active": true
-    }
-  },
-  {
-    "model": "accounts.systempermission",
-    "pk": 2,
-    "fields": {
-      "code": "access_control_manage",
-      "name": "Gestión de Accesos",
-      "description": "Permite registrar visitas, escanear QR y controlar garita",
-      "module": "security",
-      "is_active": true
-    }
-  },
-  {
-    "model": "accounts.systempermission",
-    "pk": 3,
-    "fields": {
-      "code": "resident_app_use",
-      "name": "Uso de App Móvil",
-      "description": "Permite generar invitaciones QR y ver comunicados",
-      "module": "community",
-      "is_active": true
-    }
-  },
-  {
-    "model": "accounts.role",
-    "pk": 1,
-    "fields": {
-      "slug": "administrador",
-      "name": "Administrador",
-      "description": "Acceso total al sistema y gestión global del condominio",
-      "is_public": false,
-      "is_active": true,
-      "permissions": [1, 2, 3]
-    }
-  },
-  {
-    "model": "accounts.role",
-    "pk": 2,
-    "fields": {
-      "slug": "directiva",
-      "name": "Directiva",
-      "description": "Acceso a finanzas, reportes y supervisión",
-      "is_public": false,
-      "is_active": true,
-      "permissions": [1]
-    }
-  },
-  {
-    "model": "accounts.role",
-    "pk": 3,
-    "fields": {
-      "slug": "residente",
-      "name": "Residente",
-      "description": "Acceso a la app móvil, gestión de invitados QR y consultas",
-      "is_public": true,
-      "is_active": true,
-      "permissions": [3]
-    }
-  },
-  {
-    "model": "accounts.role",
-    "pk": 4,
-    "fields": {
-      "slug": "seguridad",
-      "name": "Seguridad",
-      "description": "Acceso a la app móvil de garita, lector QR y turnos",
-      "is_public": false,
-      "is_active": true,
-      "permissions": [2]
-    }
+{
+  "model": "accounts.systempermission",
+  "pk": 1,
+  "fields": {
+    "code": "manage_residents",
+    "name": "Gestionar residentes",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
   }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 2,
+  "fields": {
+    "code": "manage_units",
+    "name": "Gestionar unidades",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 3,
+  "fields": {
+    "code": "manage_staff",
+    "name": "Gestionar personal",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 4,
+  "fields": {
+    "code": "manage_incidents",
+    "name": "Gestionar incidencias",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 5,
+  "fields": {
+    "code": "manage_maintenance",
+    "name": "Gestionar mantenimientos",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 6,
+  "fields": {
+    "code": "manage_visits",
+    "name": "Gestionar visitas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 7,
+  "fields": {
+    "code": "manage_reservations",
+    "name": "Gestionar reservas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 8,
+  "fields": {
+    "code": "manage_announcements",
+    "name": "Gestionar comunicados",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 9,
+  "fields": {
+    "code": "view_reports",
+    "name": "Consultar reportes",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 10,
+  "fields": {
+    "code": "manage_settings",
+    "name": "Gestionar configuración general",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 11,
+  "fields": {
+    "code": "view_expenses",
+    "name": "Revisar gastos",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 12,
+  "fields": {
+    "code": "track_assembly_decisions",
+    "name": "Dar seguimiento a decisiones de asamblea",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 13,
+  "fields": {
+    "code": "view_important_incidents",
+    "name": "Consultar incidencias importantes",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 14,
+  "fields": {
+    "code": "view_general_status",
+    "name": "Consultar el estado general",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 15,
+  "fields": {
+    "code": "register_visits",
+    "name": "Registrar visitas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 16,
+  "fields": {
+    "code": "report_incidents",
+    "name": "Reportar incidencias",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 17,
+  "fields": {
+    "code": "reserve_areas",
+    "name": "Reservar áreas comunes",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 18,
+  "fields": {
+    "code": "view_announcements",
+    "name": "Consultar comunicados",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 19,
+  "fields": {
+    "code": "view_own_data",
+    "name": "Consultar datos propios",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 20,
+  "fields": {
+    "code": "track_own_requests",
+    "name": "Dar seguimiento a solicitudes propias",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 21,
+  "fields": {
+    "code": "validate_visits",
+    "name": "Validar visitas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 22,
+  "fields": {
+    "code": "register_entry_exit",
+    "name": "Registrar entradas y salidas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 23,
+  "fields": {
+    "code": "capture_security_evidence",
+    "name": "Capturar evidencia de seguridad",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 24,
+  "fields": {
+    "code": "manage_shift_handover",
+    "name": "Registrar entrega de turno",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 25,
+  "fields": {
+    "code": "view_assigned_work_orders",
+    "name": "Ver trabajos asignados",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 26,
+  "fields": {
+    "code": "update_work_order_status",
+    "name": "Actualizar estado de trabajos",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 27,
+  "fields": {
+    "code": "attach_work_evidence",
+    "name": "Adjuntar evidencias de trabajo",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 28,
+  "fields": {
+    "code": "maintain_assets",
+    "name": "Registrar mantenimiento de activos",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 29,
+  "fields": {
+    "code": "view_assigned_cleaning_tasks",
+    "name": "Ver tareas de limpieza asignadas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 30,
+  "fields": {
+    "code": "report_detected_issues",
+    "name": "Reportar problemas detectados",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 31,
+  "fields": {
+    "code": "complete_cleaning_tasks",
+    "name": "Completar tareas de limpieza",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.systempermission",
+  "pk": 32,
+  "fields": {
+    "code": "access_assigned_external_orders",
+    "name": "Acceder a órdenes externas asignadas",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 1,
+  "fields": {
+    "slug": "administrador",
+    "name": "Administrador",
+    "description": "Administrador del condominio con control general del sistema.",
+    "is_public": false,
+    "is_active": true,
+    "permissions": [
+      32,
+      27,
+      23,
+      31,
+      28,
+      8,
+      4,
+      5,
+      7,
+      1,
+      10,
+      24,
+      3,
+      2,
+      6,
+      22,
+      15,
+      30,
+      16,
+      17,
+      12,
+      20,
+      26,
+      21,
+      18,
+      29,
+      25,
+      11,
+      14,
+      13,
+      19,
+      9
+    ]
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 2,
+  "fields": {
+    "slug": "directiva",
+    "name": "Directiva",
+    "description": "Presidente, tesorero, secretario y vocales.",
+    "is_public": false,
+    "is_active": true,
+    "permissions": [
+      12,
+      11,
+      14,
+      13,
+      9
+    ]
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 3,
+  "fields": {
+    "slug": "residente",
+    "name": "Copropietario / Residente",
+    "description": "Propietario o inquilino de una unidad.",
+    "is_public": true,
+    "is_active": true,
+    "permissions": [
+      15,
+      16,
+      17,
+      20,
+      18,
+      19
+    ]
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 4,
+  "fields": {
+    "slug": "seguridad",
+    "name": "Seguridad / Guardia",
+    "description": "Personal de portería y seguridad.",
+    "is_public": false,
+    "is_active": true,
+    "permissions": [
+      23,
+      24,
+      22,
+      21
+    ]
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 5,
+  "fields": {
+    "slug": "mantenimiento",
+    "name": "Mantenimiento",
+    "description": "Técnico o encargado interno de mantenimiento.",
+    "is_public": false,
+    "is_active": true,
+    "permissions": [
+      27,
+      28,
+      26,
+      25
+    ]
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 6,
+  "fields": {
+    "slug": "limpieza",
+    "name": "Limpieza",
+    "description": "Personal interno de limpieza.",
+    "is_public": false,
+    "is_active": true,
+    "permissions": [
+      31,
+      30,
+      29
+    ]
+  }
+},
+{
+  "model": "accounts.role",
+  "pk": 7,
+  "fields": {
+    "slug": "proveedor-externo",
+    "name": "Proveedor externo",
+    "description": "Proveedor con acceso limitado a órdenes asignadas.",
+    "is_public": false,
+    "is_active": true,
+    "permissions": [
+      32,
+      27,
+      26
+    ]
+  }
+}
 ]
