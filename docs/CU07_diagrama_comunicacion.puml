@@ -1,0 +1,53 @@
+@startuml
+title CU07 · Gestionar personal del condominio · Diagrama de comunicación
+top to bottom direction
+skinparam shadowing false
+skinparam nodesep 65
+skinparam ranksep 65
+skinparam defaultFontName Arial
+skinparam rectangle {
+  BackgroundColor #F8FBFF
+  BorderColor #8AA4C2
+  FontColor #10233C
+}
+
+actor Administrador as admin
+rectangle "web : Pantalla Personal\nTaji Web" as web
+rectangle "api : StaffApi\nAngular" as api
+rectangle "vista : StaffViewSet\nDjango REST" as view
+rectangle "permiso : CanManageStaff" as permission
+rectangle "serializador : StaffSerializer" as serializer
+database "bd : PostgreSQL\nPerson + Staff" as db
+
+admin --> web : 1: consultar personal\n2: guardar registro\n3: confirmar eliminación
+web --> api : 1.1: list(filtros, página)\n2.1: create/update(datos)\n3.1: delete(id)
+api --> view : 1.2: GET /staff/\n2.2: POST/PATCH /staff/\n3.2: DELETE /staff/{id}/
+
+view -left-> permission : 1.3 / 2.3 / 3.3:\nvalidar manage_staff
+view --> serializer : 2.4: validar y guardar datos
+view -right-> db : 1.4: consultar, filtrar y paginar\n3.4: eliminar Staff; conservar Person
+serializer --> db : 2.5: transacción Person + Staff\ngenerar código al registrar
+
+note left of web
+  Mensajes numerados por operación:
+  1 = consulta · 2 = alta/edición · 3 = eliminación
+end note
+
+note left of permission
+  Sin permiso: 403 permission_denied.
+  La operación no continúa.
+end note
+
+note left of serializer
+  Datos inválidos: 400 validation_error
+  con errores por campo; no se persiste.
+end note
+
+note bottom of db
+  Retornos a la Web por la misma cadena:
+  1.5: 200 pagination + results
+  2.6: 201/200 datos guardados
+  3.5: 204 vínculo eliminado
+  La Web confirma y actualiza el directorio.
+end note
+@enduml

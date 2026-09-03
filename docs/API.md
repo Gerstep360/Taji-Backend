@@ -65,3 +65,30 @@ atómica; un conflicto no deja personas huérfanas.
 La web recibe la sesión mediante cookies HttpOnly. Flutter debe enviar
 `"client": "mobile"` al iniciar o renovar sesión y recibe el par JWT en el
 cuerpo.
+
+## CU07 · Personal del condominio
+
+Todos los endpoints requieren sesión y el permiso `manage_staff`:
+
+- `GET /api/v1/staff/`: listado paginado.
+- `POST /api/v1/staff/`: registra `Person` y `Staff` atómicamente.
+- `GET /api/v1/staff/{id}/`: consulta un registro.
+- `PUT/PATCH /api/v1/staff/{id}/`: actualiza datos personales y laborales.
+- `DELETE /api/v1/staff/{id}/`: elimina el vínculo laboral y conserva `Person`.
+- `GET /api/v1/staff/options/`: tipos de documento, áreas y estados.
+
+El listado acepta `search`, `staff_type`, `status`, `ordering`, `page`
+y `page_size`. La búsqueda cubre nombre, documento, teléfono, correo y código
+interno. Los valores de áreas y estados se consumen desde `options/` para que
+Web no duplique el catálogo del Backend.
+
+`employee_code` es de solo lectura: al registrar se genera un identificador
+estable `PER-00001` basado en el ID del registro. No cambia al editar su área.
+La migración completa los registros sin código y conserva los códigos existentes.
+
+`hire_date` es el primer día de trabajo en el condominio y es opcional.
+`end_date` es el último día trabajado, también opcional y solo se admite con
+`status=INACTIVE`. No puede ser anterior a `hire_date`.
+
+Los diagramas exclusivos del caso de uso están en
+`CU07_diagrama_secuencia.puml` y `CU07_diagrama_comunicacion.puml`.

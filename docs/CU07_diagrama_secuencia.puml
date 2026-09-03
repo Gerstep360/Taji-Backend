@@ -1,0 +1,64 @@
+@startuml
+title CU07 · Gestionar personal del condominio · Diagrama de secuencia
+
+actor Administrador
+boundary "Web Taji\nPantalla Personal" as Web
+control "StaffApi\nAngular" as WebApi
+control "StaffViewSet\nDjango REST" as View
+control "CanManageStaff" as Permission
+control "StaffSerializer" as Serializer
+database "PostgreSQL\nPerson + Staff" as DB
+
+Administrador -> Web: Abre Personal
+Web -> WebApi: list(filtros, página)
+WebApi -> View: GET /api/v1/staff/
+View -> Permission: validar manage_staff
+
+alt Sin permiso
+  Permission --> View: denegado
+  View --> WebApi: 403 permission_denied
+  WebApi --> Web: mostrar acceso denegado
+else Autorizado
+  Permission --> View: permitido
+  View -> DB: SELECT Staff JOIN Person\n+ filtros + orden + paginación
+  DB --> View: personal encontrado
+  View --> WebApi: 200 pagination + results
+  WebApi --> Web: renderizar directorio
+end
+
+group Registrar o editar personal
+  Administrador -> Web: Completa formulario y guarda
+  Web -> WebApi: create(payload) / update(id, payload)
+  WebApi -> View: POST /staff/ o PATCH /staff/{id}/
+  View -> Permission: validar manage_staff
+  Permission --> View: permitido
+  View -> Serializer: validar datos personales y laborales
+  alt Datos inválidos
+    Serializer --> View: errores por campo
+    View --> WebApi: 400 validation_error
+    WebApi --> Web: marcar campos y explicar corrección
+  else Datos válidos
+    Serializer -> DB: BEGIN
+    Serializer -> DB: INSERT/UPDATE Person
+    Serializer -> DB: INSERT/UPDATE Staff\n+ generar código PER-00001 al registrar
+    Serializer -> DB: COMMIT
+    DB --> Serializer: registro guardado
+    Serializer --> View: Staff + datos Person
+    View --> WebApi: 201 Created / 200 OK
+    WebApi --> Web: confirmar y actualizar directorio
+  end
+end
+
+group Eliminar vínculo de personal
+  Administrador -> Web: Confirma eliminar del directorio
+  Web -> WebApi: delete(id)
+  WebApi -> View: DELETE /api/v1/staff/{id}/
+  View -> Permission: validar manage_staff
+  Permission --> View: permitido
+  View -> DB: DELETE Staff\n(conservar Person)
+  DB --> View: vínculo eliminado
+  View --> WebApi: 204 No Content
+  WebApi --> Web: retirar fila y mostrar confirmación
+end
+@enduml
+
