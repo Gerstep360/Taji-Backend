@@ -1,0 +1,83 @@
+@startuml CU4_diagrama_secuencia
+title CU4: Gestionar Roles y Permisos — Diagrama de Secuencia
+
+actor Administrador as Admin
+participant "Frontend\n(Angular)" as FE
+participant "API Backend\n(Django REST)" as API
+participant "CanManageRoles\n(permission class)" as RBAC
+database "PostgreSQL\n(Base de Datos)" as DB
+
+== Flujo principal: Consultar y actualizar permisos ==
+
+Admin -> FE : Accede a /roles-y-permisos
+FE -> FE : permissionGuard('manage_roles')\nVerifica role.permissions
+note right of FE : Si no tiene manage_roles\n→ redirige a /acceso-denegado
+
+FE -> API : GET /api/v1/roles/\n[Cookie JWT]
+API -> RBAC : has_permission(request, view)
+RBAC -> DB : user.role.permissions\ncontains 'manage_roles'?
+DB --> RBAC : Sí
+RBAC --> API : Permitido
+API -> DB : SELECT * FROM role WHERE is_active=true
+DB --> API : Lista de roles
+API --> FE : 200 OK\n[{slug, name, permissions[]}]
+
+FE --> Admin : Muestra lista de roles
+
+Admin -> FE : Selecciona rol "seguridad"
+FE -> API : GET /api/v1/roles/seguridad/permissions/\n[Cookie JWT]
+API -> RBAC : has_permission()
+RBAC --> API : Permitido
+API -> DB : SELECT role + permissions WHERE slug='seguridad'
+DB --> API : Role con permisos actuales
+API --> FE : 200 OK\n{slug, name, permissions[]}
+FE --> Admin : Muestra permisos con checkboxes\n(restringidos deshabilitados)
+
+Admin -> FE : Desmarca "validate_visits"\nAgrega "register_entry_exit"
+Admin -> FE : Click "Guardar cambios"
+
+FE -> API : PATCH /api/v1/roles/seguridad/permissions/\n{permissions: ["register_entry_exit"]}\n[Cookie JWT]
+API -> RBAC : has_permission()
+RBAC --> API : Permitido
+API -> API : RolePermissionsUpdateSerializer.validate()\n• Códigos existen?\n• manage_roles solo para admin?\n• Permisos obligatorios conservados?\n• Restricciones por rol?
+API -> DB : UPDATE role_permission\nSET permissions = [register_entry_exit]
+DB --> API : OK
+API -> DB : SELECT role + permissions (refresh)
+DB --> API : Role actualizado
+API --> FE : 200 OK\n{slug, name, permissions[]}
+FE --> Admin : "Permisos actualizados correctamente"
+
+== Flujo alternativo A1: No administrador intenta acceder ==
+
+actor Directiva as Dir
+
+Dir -> FE : Accede a /roles-y-permisos (URL directa)
+FE -> FE : permissionGuard('manage_roles')\nrole.permissions does NOT include 'manage_roles'
+FE --> Dir : Redirige a /acceso-denegado
+note right of FE : Pantalla 403\n"No tienes permisos para acceder a esta sección"
+
+Dir -> API : GET /api/v1/roles/ (Postman / curl)
+API -> RBAC : has_permission()
+RBAC -> DB : user.role = directiva\n'manage_roles' en permisos?
+DB --> RBAC : No
+RBAC --> API : Denegado
+API --> Dir : 403 Forbidden\n{error: {code: "permission_denied"}}
+
+== Flujo alternativo A3: Seguridad intenta recibir register_visits ==
+
+Admin -> FE : Intenta marcar "register_visits"\npara rol "seguridad"
+FE -> FE : isForbidden('register_visits') = true\n→ checkbox deshabilitado
+note right of FE : El frontend deshabilita visualmente\npermisos prohibidos
+
+Admin -> API : PATCH /api/v1/roles/seguridad/permissions/\n{permissions: ["validate_visits","register_visits"]}\n[directo via Postman]
+API -> RBAC : has_permission() → Permitido (es admin)
+API -> API : validate() → FORBIDDEN_PERMISSIONS_BY_ROLE\n'seguridad' no puede tener 'register_visits' (RN3)
+API --> Admin : 400 Bad Request\n{error: {fields: {permissions: "..."}}}
+
+== Flujo alternativo A5: Remover manage_roles del Administrador ==
+
+Admin -> API : PATCH /api/v1/roles/administrador/permissions/\n{permissions: [...sin manage_roles...]}
+API -> API : validate() → MANDATORY_PERMISSIONS_BY_ROLE\n'administrador' debe conservar 'manage_roles'
+API --> Admin : 400 Bad Request\n{error: {fields: {permissions: "..."}}}
+
+@enduml

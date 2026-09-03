@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
+    "cu2.apps.Cu2Config",
 ]
 
 MIDDLEWARE = [

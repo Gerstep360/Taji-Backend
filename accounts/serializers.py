@@ -23,7 +23,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "email", "is_superuser", "first_name", "last_name", "full_name", "phone", "role", "date_joined")
+        fields = ("id", "email", "is_superuser", "is_approved", "first_name", "last_name", "full_name", "phone", "role", "date_joined")
         read_only_fields = fields
 
 
@@ -105,6 +105,7 @@ class RegisterSerializer(serializers.ModelSerializer):
                     password=password,
                     role=resident_role,
                     person=person,
+                    is_approved=False,
                     **data,
                 )
         except IntegrityError as error:
@@ -118,6 +119,7 @@ class RegisterSerializer(serializers.ModelSerializer):
                     }
                 ) from error
             raise
+
 
 
 class LoginSerializer(serializers.Serializer):

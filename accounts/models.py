@@ -103,6 +103,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     role = models.ForeignKey(Role, on_delete=models.PROTECT, related_name="users", null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    is_approved = models.BooleanField(
+        default=True,
+        help_text="False mientras el Administrador no haya aprobado la solicitud de Residente.",
+    )
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -148,6 +152,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     def has_system_permission(self, code):
         if self.is_superuser:
             return True
+        if not self.is_approved:
+            return False
         return bool(self.role and self.role.permissions.filter(code=code, is_active=True).exists())
 
     def __str__(self):
