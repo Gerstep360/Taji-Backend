@@ -1,8 +1,10 @@
+"""Permisos para CU02: Gestionar usuarios, roles y permisos."""
+
 from rest_framework.permissions import BasePermission
 
 
 class CanManageRoles(BasePermission):
-    """Restringe el CU2 (Gestionar Roles y Permisos) al rol Administrador. (RN1)"""
+    """Restringe la gestión de roles y permisos al rol Administrador. (CU02 - RN1)"""
 
     message = "No tienes permiso para gestionar roles y permisos del sistema."
 

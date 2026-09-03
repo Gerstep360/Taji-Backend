@@ -1,3 +1,5 @@
+"""Vistas para CU02: Gestionar usuarios, roles y permisos."""
+
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound
@@ -6,8 +8,9 @@ from rest_framework.response import Response
 from accounts.api_serializers import ErrorResponseSerializer
 from accounts.models import Role, SystemPermission, User
 from accounts.serializers import UserSerializer
-from cu2.permissions import CanManageRoles
-from cu2.serializers import (
+
+from .permissions import CanManageRoles
+from .serializers import (
     InternalUserCreateSerializer,
     PendingResidentSerializer,
     ResidentReviewSerializer,
@@ -18,7 +21,7 @@ from cu2.serializers import (
 
 
 class RoleListView(generics.ListAPIView):
-    """Lista todos los roles activos del sistema. Solo Administrador. (CU2)"""
+    """Lista todos los roles activos del sistema. Solo Administrador. (CU02)"""
 
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
     serializer_class = RoleDetailSerializer
@@ -39,7 +42,7 @@ class RoleListView(generics.ListAPIView):
 
 
 class AllPermissionsView(generics.GenericAPIView):
-    """Lista todos los permisos activos del sistema. Solo Administrador. (CU2)"""
+    """Lista todos los permisos activos del sistema. Solo Administrador. (CU02)"""
 
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
 
@@ -58,7 +61,7 @@ class AllPermissionsView(generics.GenericAPIView):
 
 
 class RolePermissionsView(generics.GenericAPIView):
-    """Consulta o actualiza los permisos de un rol específico. Solo Administrador. (CU2)"""
+    """Consulta o actualiza los permisos de un rol específico. Solo Administrador. (CU02)"""
 
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
 
@@ -66,7 +69,6 @@ class RolePermissionsView(generics.GenericAPIView):
         try:
             return Role.objects.prefetch_related("permissions").get(slug=slug, is_active=True)
         except Role.DoesNotExist:
-            from rest_framework.exceptions import NotFound
             raise NotFound(f"No existe un rol activo con slug '{slug}'.")
 
     @extend_schema(
@@ -109,7 +111,7 @@ class RolePermissionsView(generics.GenericAPIView):
 # ── Usuarios internos ────────────────────────────────────────────────────────
 
 class InternalUserCreateView(generics.GenericAPIView):
-    """Crea un usuario interno con rol asignado. Solo Administrador. (CU2)"""
+    """Crea un usuario interno con rol asignado. Solo Administrador. (CU02)"""
 
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
     serializer_class = InternalUserCreateSerializer
@@ -135,7 +137,7 @@ class InternalUserCreateView(generics.GenericAPIView):
 # ── Residentes pendientes ────────────────────────────────────────────────────
 
 class PendingResidentsView(generics.ListAPIView):
-    """Lista Residentes cuya solicitud está pendiente de aprobación. Solo Administrador. (CU2)"""
+    """Lista Residentes cuya solicitud está pendiente de aprobación. Solo Administrador. (CU02)"""
 
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
     serializer_class = PendingResidentSerializer
@@ -161,7 +163,7 @@ class PendingResidentsView(generics.ListAPIView):
 
 
 class ResidentReviewView(generics.GenericAPIView):
-    """Aprueba o rechaza la solicitud de un Residente pendiente. Solo Administrador. (CU2)"""
+    """Aprueba o rechaza la solicitud de un Residente pendiente. Solo Administrador. (CU02)"""
 
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
     serializer_class = ResidentReviewSerializer
