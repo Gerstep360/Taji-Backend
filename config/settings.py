@@ -32,7 +32,7 @@ INSTALLED_APPS = [
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
-    "cu2.apps.Cu2Config",
+    "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
 ]
 
 MIDDLEWARE = [
@@ -166,8 +166,9 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "SCHEMA_PATH_PREFIX": r"/api/v1",
     "TAGS": [
-        {"name": "Autenticación", "description": "Registro y ciclo de sesión."},
-        {"name": "Personal", "description": "CRUD y clasificación del personal del condominio."},
+        {"name": "Autenticación", "description": "CU01: Registro y ciclo de sesión."},
+        {"name": "Roles y Permisos", "description": "CU02: Gestión de roles, permisos RBAC y aprobación de residentes."},
+        {"name": "Personal", "description": "CU07: CRUD y clasificación del personal del condominio."},
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],
 }

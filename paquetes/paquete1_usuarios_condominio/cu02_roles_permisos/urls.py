@@ -1,3 +1,5 @@
+"""Rutas para CU02: Gestionar usuarios, roles y permisos."""
+
 from django.urls import path
 
 from .views import (
@@ -9,7 +11,7 @@ from .views import (
     RolePermissionsView,
 )
 
-app_name = "cu2"
+app_name = "cu02_roles_permisos"
 
 urlpatterns = [
     # Roles y permisos

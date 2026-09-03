@@ -42,4 +42,10 @@ class UserManager(BaseUserManager):
             raise ValueError("Un superusuario debe tener is_staff=True.")
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Un superusuario debe tener is_superuser=True.")
+        if "role" not in extra_fields or extra_fields["role"] is None:
+            from .models import Role
+
+            admin_role = Role.objects.filter(slug="administrador", is_active=True).first()
+            if admin_role:
+                extra_fields["role"] = admin_role
         return self._create_user(email, password, **extra_fields)

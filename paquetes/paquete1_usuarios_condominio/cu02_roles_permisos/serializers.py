@@ -1,5 +1,6 @@
-from django.db import transaction
+"""Serializadores para CU02: Gestionar usuarios, roles y permisos."""
 
+from django.db import transaction
 from rest_framework import serializers
 
 from accounts.models import Person, Role, SystemPermission, User
@@ -107,8 +108,12 @@ class RolePermissionsUpdateSerializer(serializers.Serializer):
 # ── Usuario interno ──────────────────────────────────────────────────────────
 
 INTERNAL_ROLE_SLUGS = frozenset({
-    "administrador", "directiva", "seguridad",
-    "mantenimiento", "limpieza", "proveedor-externo",
+    "administrador",
+    "directiva",
+    "seguridad",
+    "mantenimiento",
+    "limpieza",
+    "proveedor-externo",
 })
 
 
@@ -119,7 +124,9 @@ class InternalUserCreateSerializer(serializers.Serializer):
     first_name = serializers.CharField(min_length=2, max_length=100, trim_whitespace=True)
     last_name = serializers.CharField(min_length=2, max_length=120, trim_whitespace=True)
     role_slug = serializers.SlugField(max_length=80)
-    password = serializers.CharField(write_only=True, min_length=10, max_length=128, trim_whitespace=False)
+    password = serializers.CharField(
+        write_only=True, min_length=10, max_length=128, trim_whitespace=False
+    )
 
     def validate_email(self, value: str) -> str:
         value = value.strip().lower()
@@ -160,7 +167,16 @@ class PendingResidentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "email", "first_name", "last_name", "full_name", "date_joined", "is_approved", "is_active")
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "date_joined",
+            "is_approved",
+            "is_active",
+        )
         read_only_fields = fields
 
 
