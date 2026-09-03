@@ -1,0 +1,77 @@
+@startuml CU4_diagrama_comunicacion
+title CU4: Gestionar Roles y Permisos — Diagrama de Comunicación
+
+object "Administrador\n:Actor" as Admin
+object "RolesPage\n:Component" as Page
+object "permissionGuard\n:CanActivateFn" as Guard
+object "RolesApi\n:Service" as RolesApi
+object "ApiClient\n:Service" as ApiClient
+object "AuthService\n:Service" as AuthSvc
+object "RoleListView\n:APIView" as RoleListView
+object "AllPermissionsView\n:APIView" as PermView
+object "RolePermissionsView\n:APIView" as RolePermView
+object "CanManageRoles\n:BasePermission" as PermClass
+object "RolePermissionsUpdateSerializer\n:Serializer" as Serializer
+object "Role\n:Model" as RoleModel
+object "SystemPermission\n:Model" as PermModel
+
+' Frontend flow
+Admin --> Guard : 1: navega a /roles-y-permisos
+Guard --> AuthSvc : 2: user()
+AuthSvc --> Guard : 3: user.role.permissions
+Guard --> Page : 4: activa ruta (si autorizado)
+
+Page --> RolesApi : 5: listRoles()
+RolesApi --> ApiClient : 6: GET /api/v1/roles/
+ApiClient --> RoleListView : 7: HTTP GET
+
+RoleListView --> PermClass : 8: has_permission()
+PermClass --> RoleModel : 9: user.has_system_permission('manage_roles')
+RoleModel --> PermClass : 10: True/False
+PermClass --> RoleListView : 11: autorizado
+
+RoleListView --> RoleModel : 12: Role.objects.filter(is_active=True)
+RoleModel --> RoleListView : 13: QuerySet<Role>
+RoleListView --> ApiClient : 14: 200 OK [{slug,name,permissions[]}]
+ApiClient --> RolesApi : 15: RoleDetail[]
+RolesApi --> Page : 16: roles signal
+
+Page --> RolesApi : 17: listPermissions()
+RolesApi --> ApiClient : 18: GET /api/v1/roles/permissions/
+ApiClient --> PermView : 19: HTTP GET
+PermView --> PermClass : 20: has_permission()
+PermView --> PermModel : 21: SystemPermission.objects.filter(is_active=True)
+PermModel --> PermView : 22: QuerySet<SystemPermission>
+PermView --> ApiClient : 23: 200 OK [SystemPermission[]]
+ApiClient --> RolesApi : 24: RolePermission[]
+RolesApi --> Page : 25: allPermissions signal
+
+Admin --> Page : 26: selecciona rol
+Page --> RolesApi : 27: getRolePermissions(slug)
+RolesApi --> ApiClient : 28: GET /api/v1/roles/{slug}/permissions/
+ApiClient --> RolePermView : 29: HTTP GET
+RolePermView --> PermClass : 30: has_permission()
+RolePermView --> RoleModel : 31: Role.objects.get(slug=slug)
+RoleModel --> RolePermView : 32: Role con permisos
+RolePermView --> ApiClient : 33: 200 OK {RoleDetail}
+ApiClient --> Page : 34: selectedRole signal
+
+Admin --> Page : 35: toggle permisos\n(isMandatory / isForbidden verificado en UI)
+Admin --> Page : 36: guardar cambios
+Page --> RolesApi : 37: updateRolePermissions(slug, {permissions:[]})
+RolesApi --> ApiClient : 38: PATCH /api/v1/roles/{slug}/permissions/
+ApiClient --> RolePermView : 39: HTTP PATCH
+
+RolePermView --> PermClass : 40: has_permission()
+RolePermView --> Serializer : 41: validate(data, context={role})
+Serializer --> PermModel : 42: filter(code__in=codes)
+PermModel --> Serializer : 43: existing codes
+Serializer --> Serializer : 44: validate business rules\n(ADMIN_ONLY, MANDATORY, FORBIDDEN)
+Serializer --> RoleModel : 45: role.permissions.set(...)
+RoleModel --> Serializer : 46: OK
+Serializer --> RolePermView : 47: updated Role
+RolePermView --> ApiClient : 48: 200 OK {RoleDetail actualizado}
+ApiClient --> Page : 49: roles y selectedRole actualizados
+Page --> Admin : 50: "Permisos actualizados correctamente"
+
+@enduml

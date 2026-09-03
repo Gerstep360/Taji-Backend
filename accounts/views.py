@@ -82,7 +82,7 @@ class RegisterView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         return Response(
-            {"message": "Tu cuenta fue creada. Ya puedes iniciar sesión.", "user": UserSerializer(user).data},
+            {"message": "Tu cuenta fue creada y está pendiente de aprobación por un Administrador.", "user": UserSerializer(user).data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -364,5 +364,3 @@ class ResetPasswordView(generics.GenericAPIView):
             BlacklistedToken.objects.get_or_create(token=outstanding)
 
         return Response({"message": "Tu contraseña fue actualizada. Ya puedes iniciar sesión."})
-
-

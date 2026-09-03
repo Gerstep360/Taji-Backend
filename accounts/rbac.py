@@ -31,6 +31,7 @@
     "report_detected_issues": "Reportar problemas detectados",
     "complete_cleaning_tasks": "Completar tareas de limpieza",
     "access_assigned_external_orders": "Acceder a órdenes externas asignadas",
+    "manage_roles": "Gestionar roles y permisos",
 }
 
 ROLE_DEFINITIONS = {
@@ -88,6 +89,56 @@ ROLE_DEFINITIONS = {
             "update_work_order_status",
         ],
     },
+}
+
+
+# --- CU4 business rule constants ---
+
+# Permisos exclusivos del Administrador; no pueden cederse a otros roles (RN1)
+ADMIN_ONLY_PERMISSIONS: frozenset[str] = frozenset({"manage_roles"})
+
+# Permisos exclusivos de portería/seguridad (RN2)
+SECURITY_EXCLUSIVE_PERMISSIONS: frozenset[str] = frozenset({
+    "validate_visits", "register_entry_exit",
+    "capture_security_evidence", "manage_shift_handover",
+})
+
+# Permisos exclusivos de empleado operativo (RN2)
+EMPLOYEE_EXCLUSIVE_PERMISSIONS: frozenset[str] = frozenset({
+    "view_assigned_work_orders", "update_work_order_status",
+    "attach_work_evidence", "maintain_assets",
+    "view_assigned_cleaning_tasks", "report_detected_issues",
+    "complete_cleaning_tasks", "access_assigned_external_orders",
+})
+
+# Permisos que cada rol NO puede recibir jamás
+FORBIDDEN_PERMISSIONS_BY_ROLE: dict[str, frozenset[str]] = {
+    # RN3: Solo Residente crea invitaciones; RN2: no mezclar con Empleado
+    "seguridad": (
+        frozenset({"register_visits", "manage_roles"})
+        | EMPLOYEE_EXCLUSIVE_PERMISSIONS
+    ),
+    # RN4: Directiva es solo lectura — únicamente puede tener permisos view_*/track_*
+    "directiva": frozenset({
+        "manage_residents", "manage_units", "manage_staff", "manage_incidents",
+        "manage_maintenance", "manage_visits", "manage_reservations",
+        "manage_announcements", "manage_settings", "manage_roles",
+        "register_visits", "validate_visits", "register_entry_exit",
+        "capture_security_evidence", "manage_shift_handover",
+        "update_work_order_status", "attach_work_evidence", "maintain_assets",
+        "report_detected_issues", "complete_cleaning_tasks",
+        "access_assigned_external_orders", "report_incidents", "reserve_areas",
+    }),
+    # RN2: Empleado operativo no puede tener permisos de portería
+    "mantenimiento": frozenset({"register_visits", "manage_roles"}) | SECURITY_EXCLUSIVE_PERMISSIONS,
+    "limpieza": frozenset({"register_visits", "manage_roles"}) | SECURITY_EXCLUSIVE_PERMISSIONS,
+    "proveedor-externo": frozenset({"register_visits", "manage_roles"}) | SECURITY_EXCLUSIVE_PERMISSIONS,
+    "residente": frozenset({"manage_roles"}) | SECURITY_EXCLUSIVE_PERMISSIONS,
+}
+
+# Permisos que cada rol DEBE conservar siempre (RN1)
+MANDATORY_PERMISSIONS_BY_ROLE: dict[str, frozenset[str]] = {
+    "administrador": frozenset({"manage_roles"}),
 }
 
 

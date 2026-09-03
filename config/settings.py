@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
+    "cu2.apps.Cu2Config",
 ]
 
 MIDDLEWARE = [
@@ -166,6 +167,7 @@ SPECTACULAR_SETTINGS = {
     "SCHEMA_PATH_PREFIX": r"/api/v1",
     "TAGS": [
         {"name": "Autenticación", "description": "Registro y ciclo de sesión."},
+        {"name": "Personal", "description": "CRUD y clasificación del personal del condominio."},
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],
 }

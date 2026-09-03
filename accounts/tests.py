@@ -35,7 +35,7 @@ class AuthApiTests(APITestCase):
 
     def test_rbac_catalog_is_seeded(self):
         self.assertEqual(Role.objects.count(), 7)
-        self.assertEqual(SystemPermission.objects.count(), 32)
+        self.assertEqual(SystemPermission.objects.count(), 33)
         self.assertTrue(self.role.is_public)
         self.assertFalse(Role.objects.get(slug="administrador").is_public)
 
@@ -371,7 +371,7 @@ class AuthApiTests(APITestCase):
     def test_initial_roles_fixture_matches_the_merged_rbac_catalog(self):
         call_command("loaddata", "initial_roles", verbosity=0)
         self.assertEqual(Role.objects.count(), len(ROLE_DEFINITIONS))
-        self.assertEqual(SystemPermission.objects.count(), 32)
+        self.assertEqual(SystemPermission.objects.count(), 33)
         for slug, definition in ROLE_DEFINITIONS.items():
             role = Role.objects.get(slug=slug)
             self.assertEqual(role.name, definition["name"])
@@ -379,6 +379,11 @@ class AuthApiTests(APITestCase):
                 set(role.permissions.values_list("code", flat=True)),
                 set(definition["permissions"]),
             )
+
+    def test_manage_roles_permission_exists_in_catalog(self):
+        self.assertTrue(SystemPermission.objects.filter(code="manage_roles").exists())
+        admin_role = Role.objects.get(slug="administrador")
+        self.assertIn("manage_roles", admin_role.permissions.values_list("code", flat=True))
 
     def test_admin_keeps_all_merged_models_and_secure_user_admin(self):
         for model in (Person, Role, SystemPermission, User, LoginAttempt):
@@ -398,3 +403,85 @@ class AuthApiTests(APITestCase):
         ):
             self.assertEqual(self.client.get(reverse(name)).status_code, 200, name)
 
+
+class RegistrationSecurityTests(APITestCase):
+    """
+    RN5–RN7: El registro público solo crea Residentes pendientes.
+    No puede escalarse a ningún otro rol.
+    """
+
+    REGISTER_URL = "/api/v1/auth/register/"
+    BASE_PAYLOAD = {
+        "email": "nuevo_residente@test.com",
+        "first_name": "Nuevo",
+        "last_name": "Residente",
+        "password": PASSWORD,
+        "password_confirm": PASSWORD,
+    }
+
+    def setUp(self):
+        cache.clear()  # Reset throttle counters between tests
+
+    def test_public_registration_creates_pending_user(self):
+        """RN5: El registro público crea usuario con is_approved=False."""
+        resp = self.client.post(self.REGISTER_URL, self.BASE_PAYLOAD, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        user = User.objects.get(email="nuevo_residente@test.com")
+        self.assertFalse(user.is_approved)
+        self.assertEqual(user.role.slug, "residente")
+
+    def test_pending_user_has_no_effective_permissions(self):
+        """RN5: Usuario pendiente no tiene permisos efectivos, independientemente del rol."""
+        self.client.post(self.REGISTER_URL, self.BASE_PAYLOAD, format="json")
+        user = User.objects.get(email="nuevo_residente@test.com")
+        for perm in ["register_visits", "view_own_data", "reserve_areas"]:
+            self.assertFalse(user.has_system_permission(perm), perm)
+
+    def test_pending_user_cannot_create_invitations(self):
+        """RN5 + RN3: Usuario pendiente no puede crear invitaciones (register_visits)."""
+        self.client.post(self.REGISTER_URL, self.BASE_PAYLOAD, format="json")
+        user = User.objects.get(email="nuevo_residente@test.com")
+        self.assertFalse(user.has_system_permission("register_visits"))
+
+    def test_pending_user_cannot_access_cu2(self):
+        """RN5: Usuario pendiente autenticado recibe 403 en endpoint de CU2."""
+        self.client.post(self.REGISTER_URL, self.BASE_PAYLOAD, format="json")
+        user = User.objects.get(email="nuevo_residente@test.com")
+        self.client.force_authenticate(user=user)
+        self.assertEqual(self.client.get("/api/v1/roles/").status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_public_registration_ignores_role_administrador(self):
+        """RN5: Enviar role=administrador no escala privilegios."""
+        payload = {**self.BASE_PAYLOAD, "role": "administrador", "email": "escalada1@test.com"}
+        self.client.post(self.REGISTER_URL, payload, format="json")
+        user = User.objects.filter(email="escalada1@test.com").first()
+        if user:
+            self.assertEqual(user.role.slug, "residente")
+            self.assertFalse(user.is_approved)
+
+    def test_public_registration_ignores_role_directiva(self):
+        """RN5: Enviar role=directiva no escala privilegios."""
+        payload = {**self.BASE_PAYLOAD, "role": "directiva", "email": "escalada2@test.com"}
+        self.client.post(self.REGISTER_URL, payload, format="json")
+        user = User.objects.filter(email="escalada2@test.com").first()
+        if user:
+            self.assertEqual(user.role.slug, "residente")
+            self.assertFalse(user.is_approved)
+
+    def test_public_registration_ignores_role_seguridad(self):
+        """RN5: Enviar role=seguridad no escala privilegios."""
+        payload = {**self.BASE_PAYLOAD, "role": "seguridad", "email": "escalada3@test.com"}
+        self.client.post(self.REGISTER_URL, payload, format="json")
+        user = User.objects.filter(email="escalada3@test.com").first()
+        if user:
+            self.assertEqual(user.role.slug, "residente")
+            self.assertFalse(user.is_approved)
+
+    def test_public_registration_ignores_role_mantenimiento(self):
+        """RN5: Enviar role=mantenimiento no escala privilegios."""
+        payload = {**self.BASE_PAYLOAD, "role": "mantenimiento", "email": "escalada4@test.com"}
+        self.client.post(self.REGISTER_URL, payload, format="json")
+        user = User.objects.filter(email="escalada4@test.com").first()
+        if user:
+            self.assertEqual(user.role.slug, "residente")
+            self.assertFalse(user.is_approved)

@@ -352,6 +352,17 @@
   }
 },
 {
+  "model": "accounts.systempermission",
+  "pk": 33,
+  "fields": {
+    "code": "manage_roles",
+    "name": "Gestionar roles y permisos",
+    "description": "Permite acceder al CU4 y modificar la configuración de roles y permisos del sistema.",
+    "module": "administracion",
+    "is_active": true
+  }
+},
+{
   "model": "accounts.role",
   "pk": 1,
   "fields": {
@@ -361,6 +372,7 @@
     "is_public": false,
     "is_active": true,
     "permissions": [
+      33,
       32,
       27,
       23,
