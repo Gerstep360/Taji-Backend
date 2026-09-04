@@ -1,12 +1,13 @@
 from datetime import date
 
+from django.db.models.deletion import ProtectedError
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import Person, Role, SystemPermission, User
 
-from .models import Staff
+from .models import Condominium, Sector, Staff, Unit
 
 
 class StaffApiTests(APITestCase):
@@ -175,3 +176,191 @@ class StaffApiTests(APITestCase):
             staff_type=staff_type,
             hire_date=date(2026, 1, 1),
         )
+
+
+class SectorApiTests(APITestCase):
+    def setUp(self):
+        permission, _ = SystemPermission.objects.get_or_create(
+            code="manage_units",
+            defaults={"name": "Gestionar unidades", "module": "condominiums"},
+        )
+        role, _ = Role.objects.get_or_create(
+            slug="administrador", defaults={"name": "Administrador"}
+        )
+        role.permissions.add(permission)
+        self.user = User.objects.create_user(
+            email="admin.sectors@taji.test",
+            password="ClaveSegura2026!",
+            first_name="Ada",
+            last_name="Admin",
+            role=role,
+        )
+        self.client.force_authenticate(self.user)
+        self.list_url = reverse("sector-list")
+        self.condominium = Condominium.objects.first() or Condominium.objects.create(name="Taji")
+
+    def test_create_sector_without_parent(self):
+        response = self.client.post(
+            self.list_url,
+            {"code": "T1", "name": "Torre 1", "sector_type": Sector.Type.TOWER},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertIsNone(response.data["parent"])
+        self.assertIsNone(response.data["parent_name"])
+
+    def test_create_sector_with_parent_resolves_parent_name(self):
+        parent = Sector.objects.create(
+            condominium=self.condominium, code="T2", name="Torre 2", sector_type=Sector.Type.TOWER
+        )
+        response = self.client.post(
+            self.list_url,
+            {"code": "T2-P1", "name": "Piso 1", "sector_type": Sector.Type.FLOOR, "parent": parent.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data["parent_name"], "Torre 2")
+
+    def test_sector_cannot_be_its_own_parent(self):
+        sector = Sector.objects.create(
+            condominium=self.condominium, code="T3", name="Torre 3", sector_type=Sector.Type.TOWER
+        )
+        response = self.client.patch(
+            reverse("sector-detail", args=[sector.id]), {"parent": sector.id}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_supports_search_and_type_filter(self):
+        Sector.objects.create(
+            condominium=self.condominium, code="B1", name="Bloque Norte", sector_type=Sector.Type.BLOCK
+        )
+        Sector.objects.create(
+            condominium=self.condominium, code="B2", name="Bloque Sur", sector_type=Sector.Type.BLOCK
+        )
+
+        response = self.client.get(self.list_url, {"search": "Norte", "sector_type": Sector.Type.BLOCK})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["pagination"]["total_items"], 1)
+        self.assertEqual(response.data["results"][0]["name"], "Bloque Norte")
+
+    def test_options_catalog(self):
+        response = self.client.get(reverse("sector-options-catalog"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn({"value": Sector.Type.TOWER, "label": "Torre"}, response.data["sector_types"])
+
+    def test_cannot_delete_sector_with_child_units(self):
+        sector = Sector.objects.create(
+            condominium=self.condominium, code="T4", name="Torre 4", sector_type=Sector.Type.TOWER
+        )
+        Unit.objects.create(code="U-501", unit_type=Unit.Type.APARTMENT, sector=sector)
+
+        with self.assertRaises(ProtectedError):
+            sector.delete()
+
+    def test_user_without_manage_units_permission_is_forbidden(self):
+        role = Role.objects.get(slug="directiva")
+        other = User.objects.create_user(
+            email="board.sectors@taji.test",
+            password="ClaveSegura2026!",
+            first_name="Dina",
+            last_name="Directiva",
+            role=role,
+        )
+        self.client.force_authenticate(other)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class UnitApiTests(APITestCase):
+    def setUp(self):
+        permission, _ = SystemPermission.objects.get_or_create(
+            code="manage_units",
+            defaults={"name": "Gestionar unidades", "module": "condominiums"},
+        )
+        role, _ = Role.objects.get_or_create(
+            slug="administrador", defaults={"name": "Administrador"}
+        )
+        role.permissions.add(permission)
+        self.user = User.objects.create_user(
+            email="admin.units@taji.test",
+            password="ClaveSegura2026!",
+            first_name="Ada",
+            last_name="Admin",
+            role=role,
+        )
+        self.client.force_authenticate(self.user)
+        self.list_url = reverse("unit-list")
+        self.condominium = Condominium.objects.first() or Condominium.objects.create(name="Taji")
+        self.sector = Sector.objects.create(
+            condominium=self.condominium, code="T1", name="Torre 1", sector_type=Sector.Type.TOWER
+        )
+
+    def test_create_unit_without_sector(self):
+        response = self.client.post(
+            self.list_url, {"code": "U-001", "unit_type": Unit.Type.APARTMENT}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertIsNone(response.data["sector"])
+
+    def test_create_unit_with_sector_resolves_sector_name(self):
+        response = self.client.post(
+            self.list_url,
+            {"code": "U-002", "unit_type": Unit.Type.APARTMENT, "sector": self.sector.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data["sector_name"], "Torre 1")
+
+    def test_code_must_be_unique(self):
+        Unit.objects.create(code="U-003", unit_type=Unit.Type.APARTMENT)
+        response = self.client.post(
+            self.list_url, {"code": "U-003", "unit_type": Unit.Type.HOUSE}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_supports_sector_filter(self):
+        other_sector = Sector.objects.create(
+            condominium=self.condominium, code="T2", name="Torre 2", sector_type=Sector.Type.TOWER
+        )
+        Unit.objects.create(code="U-101", unit_type=Unit.Type.APARTMENT, sector=self.sector)
+        Unit.objects.create(code="U-201", unit_type=Unit.Type.APARTMENT, sector=other_sector)
+
+        response = self.client.get(self.list_url, {"sector": self.sector.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["pagination"]["total_items"], 1)
+        self.assertEqual(response.data["results"][0]["code"], "U-101")
+
+    def test_partial_update_changes_status(self):
+        unit = Unit.objects.create(code="U-301", unit_type=Unit.Type.APARTMENT, sector=self.sector)
+        response = self.client.patch(
+            reverse("unit-detail", args=[unit.id]), {"status": Unit.Status.MAINTENANCE}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        unit.refresh_from_db()
+        self.assertEqual(unit.status, Unit.Status.MAINTENANCE)
+
+    def test_delete_unit(self):
+        unit = Unit.objects.create(code="U-401", unit_type=Unit.Type.APARTMENT)
+        response = self.client.delete(reverse("unit-detail", args=[unit.id]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Unit.objects.filter(pk=unit.id).exists())
+
+    def test_options_catalog(self):
+        response = self.client.get(reverse("unit-options-catalog"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn({"value": Unit.Type.APARTMENT, "label": "Departamento"}, response.data["unit_types"])
+
+    def test_user_without_manage_units_permission_is_forbidden(self):
+        role = Role.objects.get(slug="directiva")
+        other = User.objects.create_user(
+            email="board.units@taji.test",
+            password="ClaveSegura2026!",
+            first_name="Dina",
+            last_name="Directiva",
+            role=role,
+        )
+        self.client.force_authenticate(other)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
