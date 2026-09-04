@@ -23,8 +23,16 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "email", "first_name", "last_name", "full_name", "phone", "role", "date_joined")
+        fields = ("id", "email", "is_superuser", "is_approved", "first_name", "last_name", "full_name", "phone", "role", "date_joined")
         read_only_fields = fields
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.is_superuser and data.get("role") is None:
+            admin_role = Role.objects.filter(slug="administrador", is_active=True).first()
+            if admin_role:
+                data["role"] = RoleSerializer(admin_role).data
+        return data
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -105,6 +113,7 @@ class RegisterSerializer(serializers.ModelSerializer):
                     password=password,
                     role=resident_role,
                     person=person,
+                    is_approved=False,
                     **data,
                 )
         except IntegrityError as error:
@@ -118,6 +127,7 @@ class RegisterSerializer(serializers.ModelSerializer):
                     }
                 ) from error
             raise
+
 
 
 class LoginSerializer(serializers.Serializer):
