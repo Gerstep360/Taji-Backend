@@ -168,6 +168,7 @@ SPECTACULAR_SETTINGS = {
     "TAGS": [
         {"name": "Autenticación", "description": "Registro y ciclo de sesión."},
         {"name": "Personal", "description": "CRUD y clasificación del personal del condominio."},
+        {"name": "Residentes", "description": "CRUD de residentes y copropietarios."},
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],
 }

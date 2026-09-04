@@ -1,0 +1,54 @@
+@startuml
+title CU05 · Gestionar residentes y copropietarios · Diagrama de comunicación
+top to bottom direction
+skinparam shadowing false
+skinparam nodesep 65
+skinparam ranksep 65
+skinparam defaultFontName Arial
+skinparam rectangle {
+  BackgroundColor #F8FBFF
+  BorderColor #8AA4C2
+  FontColor #10233C
+}
+
+actor Administrador as admin
+rectangle "web : Pantalla Residentes\ny copropietarios\nTaji Web" as web
+rectangle "api : ResidentApi\nAngular" as api
+rectangle "vista : ResidentViewSet\nDjango REST" as view
+rectangle "permiso : CanManageResidents" as permission
+rectangle "serializador : ResidentSerializer" as serializer
+database "bd : PostgreSQL\nPerson + Resident" as db
+
+admin --> web : 1: consultar residentes\n2: guardar registro\n3: activar/desactivar
+web --> api : 1.1: list(filtros, página)\n2.1: create/update(datos)\n3.1: update(id, {status})
+api --> view : 1.2: GET /residents/\n2.2: POST/PATCH /residents/\n3.2: PATCH /residents/{id}/
+
+view -left-> permission : 1.3 / 2.3 / 3.3:\nvalidar manage_residents
+view --> serializer : 2.4 / 3.4: validar y guardar datos
+view -right-> db : 1.4: consultar, filtrar y paginar
+
+serializer --> db : 2.5: transacción Person + Resident\n3.5: actualizar status + deactivated_at\n(sin eliminar el registro)
+
+note left of web
+  Mensajes numerados por operación:
+  1 = consulta · 2 = alta/edición · 3 = activar/desactivar
+end note
+
+note left of permission
+  Sin permiso: 403 permission_denied.
+  La operación no continúa.
+end note
+
+note left of serializer
+  Documento duplicado o datos inválidos: 400 validation_error
+  con errores por campo; no se persiste.
+end note
+
+note bottom of db
+  Retornos a la Web por la misma cadena:
+  1.5: 200 pagination + results
+  2.6: 201/200 datos guardados
+  3.6: 200 estado actualizado (residente conservado)
+  La Web confirma y actualiza el directorio.
+end note
+@enduml

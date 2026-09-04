@@ -305,6 +305,65 @@ class AuthApiTests(APITestCase):
         self.assertEqual(user.person.last_name, "Perez")
         self.assertEqual(user.person.phone, "70001234")
 
+    def test_registration_reuses_unclaimed_person_with_matching_contact_email(self):
+        cache.clear()  # Evita que el throttle de "register" arrastre conteo de otros tests.
+        existing_person = Person.objects.create(
+            first_name="Nombre Viejo",
+            last_name="Apellido Viejo",
+            contact_email="ya.registrado@example.com",
+        )
+        persons_before = Person.objects.count()
+
+        response = self.client.post(
+            "/api/v1/auth/register/",
+            {
+                "email": "ya.registrado@example.com",
+                "first_name": "Nombre Nuevo",
+                "last_name": "Apellido Nuevo",
+                "phone": "70009999",
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(Person.objects.count(), persons_before)
+        existing_person.refresh_from_db()
+        user = User.objects.get(email="ya.registrado@example.com")
+        self.assertEqual(user.person_id, existing_person.id)
+        self.assertEqual(existing_person.first_name, "Nombre Nuevo")
+
+    def test_registration_does_not_reuse_person_already_claimed_by_another_user(self):
+        cache.clear()  # Evita que el throttle de "register" arrastre conteo de otros tests.
+        claimed_person = Person.objects.create(
+            first_name="Ya Tiene",
+            last_name="Cuenta",
+            contact_email="con.cuenta@example.com",
+        )
+        User.objects.create_user(
+            email="con.cuenta@example.com",
+            password=PASSWORD,
+            person=claimed_person,
+            role=Role.objects.get(slug="residente"),
+        )
+        persons_before = Person.objects.count()
+
+        response = self.client.post(
+            "/api/v1/auth/register/",
+            {
+                "email": "otro.correo@example.com",
+                "first_name": "Otra",
+                "last_name": "Persona",
+                "password": PASSWORD,
+                "password_confirm": PASSWORD,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(Person.objects.count(), persons_before + 1)
+
     def test_full_name_property_works(self):
         self.assertEqual(self.user.full_name, "Ana Rojas")
 
