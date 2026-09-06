@@ -1,5 +1,3 @@
-"""Permisos para CU07: Gestionar personal del condominio."""
-
 from rest_framework.permissions import BasePermission
 
 

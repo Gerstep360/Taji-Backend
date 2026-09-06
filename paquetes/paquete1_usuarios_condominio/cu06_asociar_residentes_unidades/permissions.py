@@ -1,0 +1,1 @@
+from paquetes.paquete1_usuarios_condominio.cu05_residentes.permissions import CanManageResidents

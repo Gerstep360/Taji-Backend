@@ -1,5 +1,3 @@
-"""Permisos para CU04: Gestionar sectores y unidades habitacionales."""
-
 from rest_framework.permissions import BasePermission
 
 

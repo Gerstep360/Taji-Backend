@@ -1,0 +1,4 @@
+# Preserve Linux shell scripts when cloning from Windows.
+*.sh text eol=lf
+*.service text eol=lf
+*.timer text eol=lf

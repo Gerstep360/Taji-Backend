@@ -1,5 +1,3 @@
-"""Permisos para CU05: Gestionar residentes y copropietarios."""
-
 from rest_framework.permissions import BasePermission
 
 

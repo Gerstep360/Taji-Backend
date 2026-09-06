@@ -1,32 +1,5 @@
-from rest_framework.permissions import BasePermission
+"""Compatibilidad con imports del Sprint 0 y diagramas existentes."""
 
-
-class CanManageStaff(BasePermission):
-    """Limita CU07 a usuarios con el permiso funcional de personal."""
-
-    message = "No tienes permiso para gestionar al personal del condominio."
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(user and user.is_authenticated and user.has_system_permission("manage_staff"))
-
-
-class CanManageResidents(BasePermission):
-    """Limita CU05 a usuarios con el permiso funcional de residentes."""
-
-    message = "No tienes permiso para gestionar a los residentes del condominio."
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(user and user.is_authenticated and user.has_system_permission("manage_residents"))
-
-
-class CanManageUnits(BasePermission):
-    """Limita CU04 a usuarios con el permiso funcional de unidades."""
-
-    message = "No tienes permiso para gestionar sectores y unidades del condominio."
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(user and user.is_authenticated and user.has_system_permission("manage_units"))
-
+from paquetes.paquete1_usuarios_condominio.cu04_sectores_unidades.permissions import CanManageUnits
+from paquetes.paquete1_usuarios_condominio.cu05_residentes.permissions import CanManageResidents
+from paquetes.paquete1_usuarios_condominio.cu07_personal.permissions import CanManageStaff
