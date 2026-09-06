@@ -238,7 +238,16 @@ run_action() {
             sleep 2
         fi
 
-        if check_backend_health; then
+        healthy=0
+        for i in {1..10}; do
+            if check_backend_health; then
+                healthy=1
+                break
+            fi
+            sleep 1
+        done
+
+        if [[ $healthy -eq 1 ]]; then
             echo -e "${BRIGHT_GREEN}[OK] Backend API responde correctamente (HTTP 200 OK)${RESET}"
             return 0
         else
