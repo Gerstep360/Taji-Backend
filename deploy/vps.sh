@@ -295,6 +295,16 @@ do_deploy_backend() {
 run_action() {
     local MODE=$1
 
+    if [[ $MODE == "superuser" || $MODE == "createsuperuser" ]]; then
+        do_create_superuser
+        return 0
+    fi
+
+    if [[ $MODE == "users" || $MODE == "listusers" ]]; then
+        do_list_users
+        return 0
+    fi
+
     if [[ $MODE == "logs" ]]; then
         show_backend_logs
         return 0
