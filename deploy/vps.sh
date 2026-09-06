@@ -74,6 +74,16 @@ animated_progress_bar() {
 fail() { echo -e "${RED}ERROR: $*${RESET}" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || fail 'Este script debe ejecutarse con sudo.'
 
+check_backend_health() {
+    if curl --fail --silent --connect-timeout 3 "http://127.0.0.1:8000/api/v1/health/" >/dev/null 2>&1; then
+        return 0
+    fi
+    if curl --fail --silent --connect-timeout 3 "http://127.0.0.1/taji/api/v1/health/" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
 # --- Menú Interactivo ---
 MODE=${1:-""}
 
@@ -86,27 +96,48 @@ if [[ -z "$MODE" ]]; then
     echo -e "|  ${BRIGHT_CYAN}[2]${RESET}  ${WHITE}[*] Actualizar Version (Zero-Downtime Migration + Static Update)${RESET}  |"
     echo -e "|  ${BRIGHT_CYAN}[3]${RESET}  ${WHITE}[#] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
     echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
-    echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
+    echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[6]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-5]: " CHOICE
+    read -p " Selecciona una opcion [1-6]: " CHOICE
     case "$CHOICE" in
         1) MODE="install" ;;
         2) MODE="update" ;;
         3) MODE="backup" ;;
         4) MODE="health" ;;
-        5) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        5) MODE="restart" ;;
+        6) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) fail "Opcion invalida." ;;
     esac
 fi
 
+if [[ $MODE == "restart" ]]; then
+    echo -e "${YELLOW}Reiniciando servicios PostgreSQL, Gunicorn (taji) y Nginx...${RESET}"
+    systemctl restart postgresql taji nginx
+    echo -e "${BRIGHT_GREEN}[OK] Servicios reiniciados correctamente.${RESET}"
+    MODE="health"
+fi
+
 if [[ $MODE == "health" ]]; then
-    [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env."
+    [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env. Ejecuta la opción [1] primero."
     echo -e "${YELLOW}Comprobando estado de salud del Backend API...${RESET}"
-    (curl --fail --silent --show-error --connect-timeout 3 "http://127.0.0.1:8000/api/v1/health/" >/dev/null) &
-    animated_progress_bar $! "Verificando endpoint HTTP /api/v1/health/"
-    echo -e "${BRIGHT_GREEN}[OK] Backend API responde correctamente (HTTP 200 OK)${RESET}"
-    exit 0
+    
+    if ! systemctl is-active --quiet taji; then
+        echo -e "${YELLOW}[!] El servicio taji.service no estaba activo. Iniciando servicio...${RESET}"
+        systemctl restart taji || true
+        sleep 2
+    fi
+
+    if check_backend_health; then
+        echo -e "${BRIGHT_GREEN}[OK] Backend API responde correctamente (HTTP 200 OK)${RESET}"
+        exit 0
+    else
+        echo -e "${RED}[ERROR] El servidor Django en 127.0.0.1:8000 no esta respondiendo.${RESET}"
+        echo -e "${YELLOW}--- Ultimos logs del servicio taji.service ---${RESET}"
+        journalctl -u taji -n 20 --no-pager || true
+        fail "El servicio Backend no respondio a la prueba de salud."
+    fi
 fi
 
 if [[ $MODE == "backup" ]]; then
@@ -260,14 +291,11 @@ ln -sf "$ENV_FILE" "$RELEASE/.env"
  runuser -u taji -- "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt" --quiet >/dev/null 2>&1) &
 animated_progress_bar $! "Creando entorno virtual Python e instalando Django/RestFramework"
 
-manage() { (cd "$RELEASE" && runuser -u taji -- "$RELEASE/.venv/bin/python" manage.py "$@" --settings=config.settings_production >/dev/null 2>&1); }
+manage() { (cd "$RELEASE" && runuser -u taji -- "$RELEASE/.venv/bin/python" manage.py "$@" --settings=config.settings_production); }
 
-(manage makemigrations --check --dry-run || true) &
-animated_progress_bar $! "Verificando esquema de base de datos y migraciones"
-
+(manage makemigrations --check --dry-run || true) >/dev/null 2>&1
 manage migrate --noinput
-(manage collectstatic --noinput) &
-animated_progress_bar $! "Compilando archivos estaticos de Django (collectstatic)"
+(manage collectstatic --noinput) >/dev/null 2>&1
 chmod -R a+rX "$RELEASE/staticfiles"
 
 NEXT_LINK="$ROOT/.current-${SHA}-$$"
@@ -276,9 +304,28 @@ mv -Tf "$NEXT_LINK" "$ROOT/current"
 
 systemctl enable taji >/dev/null 2>&1
 systemctl restart taji
+nginx -t >/dev/null 2>&1 && systemctl reload nginx
 
-echo -e "\n${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
-echo -e "${BRIGHT_GREEN}|   DESPLIEGUE DEL BACKEND COMPLETADO EXITOSAMENTE CON ZERO-DOWNTIME!    |${RESET}"
-echo -e "${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
-echo -e " Backend API: ${BRIGHT_CYAN}http://$DOMAIN/api/v1/${RESET}"
-echo -e " Commit SHA:  ${BRIGHT_MAGENTA}$SHA${RESET}\n"
+# Verificación de salud automática tras el despliegue
+echo -e "${YELLOW}Verificando arranque del servicio Django Gunicorn...${RESET}"
+healthy=0
+for i in {1..10}; do
+    if check_backend_health; then
+        healthy=1
+        break
+    fi
+    sleep 1
+done
+
+if [[ $healthy -eq 1 ]]; then
+    echo -e "\n${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_GREEN}|   DESPLIEGUE DEL BACKEND COMPLETADO EXITOSAMENTE CON ZERO-DOWNTIME!    |${RESET}"
+    echo -e "${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
+    echo -e " Backend API: ${BRIGHT_CYAN}http://$DOMAIN/api/v1/${RESET}"
+    echo -e " Commit SHA:  ${BRIGHT_MAGENTA}$SHA${RESET}\n"
+else
+    echo -e "${RED}[ERROR] El servicio Django no respondió después del reinicio.${RESET}"
+    echo -e "${YELLOW}--- Logs recientes del servicio taji.service ---${RESET}"
+    journalctl -u taji -n 25 --no-pager || true
+    fail "Fallo el arranque del servicio Backend Gunicorn."
+fi
