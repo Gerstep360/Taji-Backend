@@ -143,9 +143,9 @@ class AuthApiTests(APITestCase):
         response = self.client.get("/api/v1/auth/me/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["resident_units"][0]["unit_code"], "ME-001")
-        self.assertEqual(response.data["resident_units"][0]["is_primary"], True)
-        self.assertEqual(response.data["linked_residents"][0]["full_name"], "Luis Vinculado")
+        self.assertEqual(response.data["user"]["resident_units"][0]["unit_code"], "ME-001")
+        self.assertEqual(response.data["user"]["resident_units"][0]["is_primary"], True)
+        self.assertEqual(response.data["user"]["linked_residents"][0]["full_name"], "Luis Vinculado")
 
     def test_web_login_uses_httponly_cookies_and_no_tokens_in_body(self):
         response = self.client.post(

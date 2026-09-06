@@ -321,9 +321,11 @@ class MeView(generics.GenericAPIView):
             ]
         return Response(
             {
-                "user": user_data,
-                "resident_units": resident_units,
-                "linked_residents": linked_residents,
+                "user": {
+                    **user_data,
+                    "resident_units": resident_units,
+                    "linked_residents": linked_residents,
+                },
             }
         )
 
