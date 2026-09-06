@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ubuntu 24.04 / Debian 12+. Full Production Zero-Downtime Deployment with GUI-like Animated TUI for Taji Backend.
+# Ubuntu 24.04 / Debian 12+. Full Production Zero-Downtime Deployment with Clean TUI for Taji Backend.
 set -Eeuo pipefail
 umask 027
 
@@ -14,43 +14,44 @@ BRIGHT_CYAN='\033[1;36m'
 MAGENTA='\033[0;35m'
 BRIGHT_MAGENTA='\033[1;35m'
 YELLOW='\033[1;33m'
+BRIGHT_YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 BRIGHT_GREEN='\033[1;32m'
 RED='\033[0;31m'
 WHITE='\033[1;37m'
+BRIGHT_WHITE='\033[1;37m'
 GRAY='\033[0;90m'
 RESET='\033[0m'
 
 animated_banner() {
     clear
-    echo -e "${BRIGHT_CYAN}╔════════════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${BRIGHT_CYAN}║   ████████╗ █████╗  ██████╗ ██╗                                        ║${RESET}"
-    echo -e "${BRIGHT_CYAN}║   ╚══██╔══╝██╔══██╗   ██║   ██║   ${BRIGHT_WHITE}S I S T E M A                        ${BRIGHT_CYAN}║${RESET}"
-    echo -e "${YELLOW}║      ██║   ███████║   ██║   ██║   ${BRIGHT_YELLOW}C O N D O M I N I O S                ${YELLOW}║${RESET}"
-    echo -e "${MAGENTA}║      ██║   ██║  ██║██   ██║ ██║                                        ║${RESET}"
-    echo -e "${BRIGHT_MAGENTA}║      ██║   ██║  ██║╚█████╔╝ ██║   ${BRIGHT_GREEN}● DEPLOYMENT VPS ENGINE (DJANGO)     ${BRIGHT_MAGENTA}║${RESET}"
-    echo -e "${BRIGHT_MAGENTA}║      ╚═╝   ╚═╝  ╚═╝ ╚════╝  ╚═╝                                        ║${RESET}"
-    echo -e "${BRIGHT_CYAN}╚════════════════════════════════════════════════════════════════════════╝${RESET}"
-    echo -e "${GRAY}        ═════════════════════════════════════════════════════════${RESET}\n"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|   ████████╗ █████╗  ██████╗ ██╗                                        |${RESET}"
+    echo -e "${BRIGHT_CYAN}|   ╚══██╔══╝██╔══██╗   ██║   ██║   ${BRIGHT_WHITE}S I S T E M A                        ${BRIGHT_CYAN}|${RESET}"
+    echo -e "${YELLOW}|      ██║   ███████║   ██║   ██║   ${BRIGHT_YELLOW}C O N D O M I N I O S                ${YELLOW}|${RESET}"
+    echo -e "${MAGENTA}|      ██║   ██║  ██║██   ██║ ██║                                        |${RESET}"
+    echo -e "${BRIGHT_MAGENTA}|      ██║   ██║  ██║╚█████╔╝ ██║   ${BRIGHT_GREEN}[*] DEPLOYMENT VPS ENGINE (DJANGO)   ${BRIGHT_MAGENTA}|${RESET}"
+    echo -e "${BRIGHT_MAGENTA}|      ╚═╝   ╚═╝  ╚═╝ ╚════╝  ╚═╝                                        |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${GRAY}        =========================================================${RESET}\n"
     sleep 0.1
 }
 
 animated_progress_bar() {
     local pid=$1
     local msg=$2
-    local duration=0
     local step=0
     local width=30
-    local spin=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local spin=('|' '/' '-' '\')
     
     while kill -0 "$pid" 2>/dev/null; do
-        local frame=${spin[$((step % 10))]}
+        local frame=${spin[$((step % 4))]}
         local filled_len=$(( (step % width) + 1 ))
         local fill=""
         local empty=""
         
-        for ((i=0; i<filled_len; i++)); do fill="${fill}█"; done
-        for ((i=filled_len; i<width; i++)); do empty="${empty}░"; done
+        for ((i=0; i<filled_len; i++)); do fill="${fill}#"; done
+        for ((i=filled_len; i<width; i++)); do empty="${empty}-"; done
         
         printf "\r ${BRIGHT_YELLOW}[%s]${RESET} ${CYAN}%-45s${RESET} ${BRIGHT_GREEN}[%s%s]${RESET}" "$frame" "$msg" "$fill" "$empty"
         step=$((step + 1))
@@ -60,12 +61,12 @@ animated_progress_bar() {
     local exit_code=$?
     
     local full_bar=""
-    for ((i=0; i<width; i++)); do full_bar="${full_bar}█"; done
+    for ((i=0; i<width; i++)); do full_bar="${full_bar}#"; done
     
     if [ $exit_code -eq 0 ]; then
-        printf "\r ${BRIGHT_GREEN}[✔] %-45s [%s] 100%% COMPLETADO${RESET}\n" "$msg" "$full_bar"
+        printf "\r ${BRIGHT_GREEN}[OK] %-45s [%s] 100%% COMPLETADO${RESET}\n" "$msg" "$full_bar"
     else
-        printf "\r ${RED}[✖] %-45s [ERROR] FALLÓ EL PROCESO${RESET}\n" "$msg"
+        printf "\r ${RED}[ERROR] %-45s [FALLO EN EL PROCESO]${RESET}\n" "$msg"
         return $exit_code
     fi
 }
@@ -73,29 +74,29 @@ animated_progress_bar() {
 fail() { echo -e "${RED}ERROR: $*${RESET}" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || fail 'Este script debe ejecutarse con sudo.'
 
-# --- Menú Interactivo GUI-Style ---
+# --- Menú Interactivo ---
 MODE=${1:-""}
 
 if [[ -z "$MODE" ]]; then
     animated_banner
-    echo -e "${BRIGHT_YELLOW}┌────────────────────────────────────────────────────────────────────────┐${RESET}"
-    echo -e "${BRIGHT_YELLOW}│                      MENÚ INTERACTIVO DE OPERACIONES                   │${RESET}"
-    echo -e "${BRIGHT_YELLOW}├────────────────────────────────────────────────────────────────────────┤${RESET}"
-    echo -e "│  ${BRIGHT_CYAN}[1]${RESET}  ${WHITE}⚡  Instalación Completa Inicial (PostgreSQL + Django + Nginx)${RESET}  │"
-    echo -e "│  ${BRIGHT_CYAN}[2]${RESET}  ${WHITE}🔄  Actualizar Versión (Zero-Downtime Migration + Static Update)${RESET} │"
-    echo -e "│  ${BRIGHT_CYAN}[3]  ${WHITE}💾  Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                 │"
-    echo -e "│  ${BRIGHT_CYAN}[4]  ${WHITE}●   Verificar Estado de Salud API (Health Check)${RESET}                 │"
-    echo -e "│  ${BRIGHT_CYAN}[5]  ${WHITE}✖   Salir${RESET}                                                         │"
-    echo -e "${BRIGHT_YELLOW}└────────────────────────────────────────────────────────────────────────┘${RESET}\n"
+    echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_YELLOW}|                      MENU INTERACTIVO DE OPERACIONES                   |${RESET}"
+    echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}"
+    echo -e "|  ${BRIGHT_CYAN}[1]${RESET}  ${WHITE}[+] Instalacion Completa Inicial (PostgreSQL + Django + Nginx)${RESET}    |"
+    echo -e "|  ${BRIGHT_CYAN}[2]${RESET}  ${WHITE}[*] Actualizar Version (Zero-Downtime Migration + Static Update)${RESET}  |"
+    echo -e "|  ${BRIGHT_CYAN}[3]${RESET}  ${WHITE}[#] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
+    echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
+    echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
+    echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " ➜ Selecciona una opción [1-5]: " CHOICE
+    read -p " Selecciona una opcion [1-5]: " CHOICE
     case "$CHOICE" in
         1) MODE="install" ;;
         2) MODE="update" ;;
         3) MODE="backup" ;;
         4) MODE="health" ;;
-        5) echo -e "${YELLOW}Operación finalizada.${RESET}"; exit 0 ;;
-        *) fail "Opción inválida." ;;
+        5) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        *) fail "Opcion invalida." ;;
     esac
 fi
 
@@ -104,7 +105,7 @@ if [[ $MODE == "health" ]]; then
     echo -e "${YELLOW}Comprobando estado de salud del Backend API...${RESET}"
     (curl --fail --silent --show-error --connect-timeout 3 "http://127.0.0.1:8000/api/v1/health/" >/dev/null) &
     animated_progress_bar $! "Verificando endpoint HTTP /api/v1/health/"
-    echo -e "${BRIGHT_GREEN}[✔] Backend API responde correctamente (HTTP 200 OK)${RESET}"
+    echo -e "${BRIGHT_GREEN}[OK] Backend API responde correctamente (HTTP 200 OK)${RESET}"
     exit 0
 fi
 
@@ -113,7 +114,7 @@ if [[ $MODE == "backup" ]]; then
     BACKUP_FILE="/var/backups/taji/manual-$(date -u +%Y%m%dT%H%M%SZ).dump"
     (runuser -u postgres -- pg_dump -Fc taji >"$BACKUP_FILE") &
     animated_progress_bar $! "Generando respaldo PostgreSQL ($BACKUP_FILE)"
-    echo -e "${BRIGHT_GREEN}[✔] Respaldo creado exitosamente: $BACKUP_FILE${RESET}"
+    echo -e "${BRIGHT_GREEN}[OK] Respaldo creado exitosamente: $BACKUP_FILE${RESET}"
     exit 0
 fi
 
@@ -122,17 +123,17 @@ if [[ $MODE == "install" && $# -lt 2 ]]; then
     DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
     [[ -z "$DETECTED_IP" ]] && DETECTED_IP="127.0.0.1"
 
-    echo -e " ${GRAY}┌────────────────────────────────────────────────────────────────┐${RESET}"
-    echo -e " ${GRAY}│${RESET} Detector de Red: IP Pública / Servidor = ${BRIGHT_CYAN}$DETECTED_IP${RESET}"
-    echo -e " ${GRAY}└────────────────────────────────────────────────────────────────┘${RESET}\n"
+    echo -e " ${GRAY}+----------------------------------------------------------------+${RESET}"
+    echo -e " ${GRAY}|${RESET} Detector de Red: IP Publica / Servidor = ${BRIGHT_CYAN}$DETECTED_IP${RESET}"
+    echo -e " ${GRAY}+----------------------------------------------------------------+${RESET}\n"
     
-    read -p " ➜ Dominio o IP del Servidor [$DETECTED_IP]: " DOMAIN
+    read -p " Dominio o IP del Servidor [$DETECTED_IP]: " DOMAIN
     DOMAIN=${DOMAIN:-$DETECTED_IP}
 
-    read -p " ➜ Correo para administración [admin@$DOMAIN]: " EMAIL
+    read -p " Correo para administracion [admin@$DOMAIN]: " EMAIL
     EMAIL=${EMAIL:-"admin@$DOMAIN"}
 
-    read -p " ➜ URL Origen Frontend Web [http://$DOMAIN/taji]: " FRONTEND
+    read -p " URL Origen Frontend Web [http://$DOMAIN/taji]: " FRONTEND
     FRONTEND=${FRONTEND:-"http://$DOMAIN/taji"}
 else
     if [[ $MODE == "install" ]]; then
@@ -245,7 +246,7 @@ fi
 
 # Proceso de Despliegue / Actualización Zero-Downtime
 (git --git-dir="$ROOT/repository.git" fetch origin refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1) &
-animated_progress_bar $! "Sincronizando última versión de Git (fetch origin main)"
+animated_progress_bar $! "Sincronizando ultima version de Git (fetch origin main)"
 SHA=$(git --git-dir="$ROOT/repository.git" rev-parse refs/remotes/origin/main)
 
 RELEASE=$(mktemp -d "$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}-XXXXXX")
@@ -266,7 +267,7 @@ animated_progress_bar $! "Verificando esquema de base de datos y migraciones"
 
 manage migrate --noinput
 (manage collectstatic --noinput) &
-animated_progress_bar $! "Compilando archivos estáticos de Django (collectstatic)"
+animated_progress_bar $! "Compilando archivos estaticos de Django (collectstatic)"
 chmod -R a+rX "$RELEASE/staticfiles"
 
 NEXT_LINK="$ROOT/.current-${SHA}-$$"
@@ -276,8 +277,8 @@ mv -Tf "$NEXT_LINK" "$ROOT/current"
 systemctl enable taji >/dev/null 2>&1
 systemctl restart taji
 
-echo -e "\n${BRIGHT_GREEN}╔════════════════════════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BRIGHT_GREEN}║   ¡DESPLIEGUE DEL BACKEND COMPLETADO EXITOSAMENTE CON ZERO-DOWNTIME!   ║${RESET}"
-echo -e "${BRIGHT_GREEN}╚════════════════════════════════════════════════════════════════════════╝${RESET}"
+echo -e "\n${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
+echo -e "${BRIGHT_GREEN}|   DESPLIEGUE DEL BACKEND COMPLETADO EXITOSAMENTE CON ZERO-DOWNTIME!    |${RESET}"
+echo -e "${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
 echo -e " Backend API: ${BRIGHT_CYAN}http://$DOMAIN/api/v1/${RESET}"
 echo -e " Commit SHA:  ${BRIGHT_MAGENTA}$SHA${RESET}\n"
