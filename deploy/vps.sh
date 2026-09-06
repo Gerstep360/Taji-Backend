@@ -115,25 +115,20 @@ do_update_git() {
 show_backend_logs() {
     clear
     echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
-    echo -e "${BRIGHT_CYAN}|                  LOGS DE OPERACION Y SERVICIOS BACKEND                 |${RESET}"
-    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+    echo -e "${BRIGHT_CYAN}|        MONITOR DE LOGS EN TIEMPO REAL - BACKEND DJANGO / GUNICORN      |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_YELLOW} Presiona [CTRL + C] para detener los logs y volver al menu principal.${RESET}\n"
 
-    echo -e "${BRIGHT_YELLOW}=== [1/3] ARCHIVO DE CONFIGURACION BACKEND (/etc/taji/backend.env) ===${RESET}"
+    echo -e "${BRIGHT_WHITE}=== CONFIGURACION ACTIVA EN /etc/taji/backend.env ===${RESET}"
     if [[ -f /etc/taji/backend.env ]]; then
         cat /etc/taji/backend.env
-    else
-        echo -e "${RED}No se encontro /etc/taji/backend.env${RESET}"
     fi
+    echo ""
 
-    echo -e "\n${BRIGHT_YELLOW}=== [2/3] LOGS RECIENTES DEL SERVICIO DJANGO GUNICORN (taji.service) ===${RESET}"
-    journalctl -u taji -n 35 --no-pager || echo -e "${RED}No se pudieron leer los logs de taji.service${RESET}"
+    trap 'echo -e "\n${BRIGHT_GREEN}[OK] Monitor finalizado. Regresando al menu principal...${RESET}"; return 0' INT
 
-    echo -e "\n${BRIGHT_YELLOW}=== [3/3] LOGS RECIENTES DE ERROR NGINX (/var/log/nginx/error.log) ===${RESET}"
-    if [[ -f /var/log/nginx/error.log ]]; then
-        tail -n 25 /var/log/nginx/error.log
-    else
-        echo -e "${GRAY}No hay errores recientes en /var/log/nginx/error.log${RESET}"
-    fi
+    echo -e "${BRIGHT_GREEN}--- Transmitiendo logs de taji.service (Gunicorn / Django API) en tiempo real ---${RESET}\n"
+    journalctl -u taji -n 15 -f || true
 }
 
 do_deploy_backend() {
@@ -176,6 +171,7 @@ do_deploy_backend() {
     systemctl daemon-reload
     systemctl enable taji >/dev/null 2>&1
     systemctl restart taji
+    sleep 2
     nginx -t >/dev/null 2>&1 && systemctl restart nginx
 
     # Verificación de salud automática tras el despliegue
@@ -411,7 +407,7 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
     echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
     echo -e "|  ${BRIGHT_CYAN}[6]${RESET}  ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[7]${RESET}  ${WHITE}[~] Ver Logs de Django (Gunicorn), Nginx y Postgres${RESET}             |"
+    echo -e "|  ${BRIGHT_CYAN}[7]${RESET}  ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                  |"
     echo -e "|  ${BRIGHT_CYAN}[8]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
