@@ -113,6 +113,8 @@ if [[ -z "$MODE" ]]; then
 fi
 
 if [[ $MODE == "restart" ]]; then
+    [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env. Ejecuta la opcion [1] primero."
+    [[ -x /opt/taji/current/.venv/bin/gunicorn ]] || fail "El ejecutable Gunicorn no existe en /opt/taji/current. Ejecuta la opcion [1] primero."
     echo -e "${YELLOW}Reiniciando servicios PostgreSQL, Gunicorn (taji) y Nginx...${RESET}"
     systemctl restart postgresql taji nginx
     echo -e "${BRIGHT_GREEN}[OK] Servicios reiniciados correctamente.${RESET}"
@@ -120,7 +122,11 @@ if [[ $MODE == "restart" ]]; then
 fi
 
 if [[ $MODE == "health" ]]; then
-    [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env. Ejecuta la opción [1] primero."
+    [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env. Ejecuta la opcion [1] primero."
+    if [[ ! -x /opt/taji/current/.venv/bin/gunicorn ]]; then
+        fail "No se encontro /opt/taji/current/.venv/bin/gunicorn. Ejecuta la opcion [1] primero."
+    fi
+    
     echo -e "${YELLOW}Comprobando estado de salud del Backend API...${RESET}"
     
     if ! systemctl is-active --quiet taji; then
@@ -273,7 +279,7 @@ SERVICE
     systemctl daemon-reload
 fi
 
-[[ -f $ENV_FILE && -d $ROOT/repository.git ]] || fail 'Ejecutar install primero.'
+[[ -f $ENV_FILE && -d $ROOT/repository.git ]] || fail 'Ejecutar opción [1] install primero.'
 
 # Proceso de Despliegue / Actualización Zero-Downtime
 (git --git-dir="$ROOT/repository.git" fetch origin refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1) &
@@ -284,12 +290,16 @@ RELEASE=$(mktemp -d "$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}-XXXXX
 chmod 0755 "$RELEASE"
 git --git-dir="$ROOT/repository.git" archive "$SHA" | tar -x -C "$RELEASE"
 printf '%s\n' "$SHA" >"$RELEASE/.release-sha"
-chown -R taji:taji "$RELEASE"
 ln -sf "$ENV_FILE" "$RELEASE/.env"
 
 (runuser -u taji -- python3 -m venv "$RELEASE/.venv" && \
- runuser -u taji -- "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt" --quiet >/dev/null 2>&1) &
-animated_progress_bar $! "Creando entorno virtual Python e instalando Django/RestFramework"
+ runuser -u taji -- "$RELEASE/.venv/bin/pip" install --upgrade pip --quiet >/dev/null 2>&1 && \
+ runuser -u taji -- "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt" gunicorn --quiet >/dev/null 2>&1) &
+animated_progress_bar $! "Creando entorno virtual Python e instalando Django y Gunicorn"
+
+chown -R taji:taji "$RELEASE"
+chmod -R a+rX "$RELEASE"
+chmod +x "$RELEASE/.venv/bin/"* 2>/dev/null || true
 
 manage() { (cd "$RELEASE" && runuser -u taji -- "$RELEASE/.venv/bin/python" manage.py "$@" --settings=config.settings_production); }
 
