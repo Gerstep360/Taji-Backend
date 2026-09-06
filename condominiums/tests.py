@@ -460,3 +460,9 @@ class ResidentUnitApiTests(APITestCase):
         self.client.force_authenticate(other)
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_resident_directory_searches_by_name_or_document(self):
+        response = self.client.get(reverse("resident-list"), {"search": "CU06-1"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["pagination"]["total_items"], 1)
+        self.assertEqual(response.data["results"][0]["full_name"], "Residente Activo")

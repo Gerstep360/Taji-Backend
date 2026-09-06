@@ -9,6 +9,7 @@ from accounts.rbac import (
     FORBIDDEN_PERMISSIONS_BY_ROLE,
     MANDATORY_PERMISSIONS_BY_ROLE,
 )
+from condominiums.models import Resident
 
 
 class SystemPermissionSerializer(serializers.ModelSerializer):
@@ -208,6 +209,8 @@ class ResidentReviewSerializer(serializers.Serializer):
             user.is_approved = True
             user.is_active = True
             user.save(update_fields=["is_approved", "is_active", "updated_at"])
+            if user.person_id:
+                Resident.objects.get_or_create(person_id=user.person_id)
         else:
             user.is_approved = False
             user.is_active = False
