@@ -131,6 +131,100 @@ show_backend_logs() {
     journalctl -u taji -n 15 -f || true
 }
 
+do_create_superuser() {
+    [[ -d $ROOT/current ]] || fail "No existe /opt/taji/current. Ejecuta la opcion [1] primero."
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|        CREACION / ACTUALIZACION RAPIDA DE SUPERUSUARIO (ADMIN)         |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+
+    read -p " Correo del Administrador [admin@gmail.com]: " ADMIN_EMAIL
+    ADMIN_EMAIL=${ADMIN_EMAIL:-"admin@gmail.com"}
+
+    read -p " Contrasena [Admin12345!]: " ADMIN_PASS
+    ADMIN_PASS=${ADMIN_PASS:-"Admin12345!"}
+
+    read -p " Nombre [Admin]: " ADMIN_NAME
+    ADMIN_NAME=${ADMIN_NAME:-"Admin"}
+
+    read -p " Apellido [Sistema]: " ADMIN_LAST
+    ADMIN_LAST=${ADMIN_LAST:-"Sistema"}
+
+    echo -e "\n${YELLOW}Procesando creacion/actualizacion de superusuario...${RESET}"
+
+    (cd "$ROOT/current" && runuser -u taji -- "$ROOT/current/.venv/bin/python" manage.py shell --settings=config.settings_production <<PYTHON
+import sys
+from accounts.models import User, Person, Role
+
+email = "${ADMIN_EMAIL}".strip().lower()
+password = "${ADMIN_PASS}"
+first_name = "${ADMIN_NAME}".strip()
+last_name = "${ADMIN_LAST}".strip()
+
+admin_role = Role.objects.filter(slug="administrador", is_active=True).first()
+
+user = User.objects.filter(email=email).first()
+if user:
+    user.is_superuser = True
+    user.is_staff = True
+    user.is_approved = True
+    user.is_active = True
+    if admin_role:
+        user.role = admin_role
+    user.set_password(password)
+    if user.person:
+        user.person.first_name = first_name
+        user.person.last_name = last_name
+        user.person.save()
+    else:
+        person = Person.objects.create(first_name=first_name, last_name=last_name, contact_email=email)
+        user.person = person
+    user.save()
+    print(f"\n >>> [OK] Usuario existente '{email}' actualizado a Superusuario (Admin).")
+else:
+    person = Person.objects.create(first_name=first_name, last_name=last_name, contact_email=email)
+    user = User.objects.create_superuser(
+        email=email,
+        password=password,
+        first_name=first_name,
+        last_name=last_name,
+        person=person,
+        role=admin_role,
+        is_approved=True,
+        is_active=True
+    )
+    print(f"\n >>> [OK] Superusuario '{email}' creado exitosamente.")
+PYTHON
+)
+    echo -e "\n${BRIGHT_GREEN}[OK] Operacion de superusuario finalizada con exito.${RESET}"
+}
+
+do_list_users() {
+    [[ -d $ROOT/current ]] || fail "No existe /opt/taji/current. Ejecuta la opcion [1] primero."
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|                  LISTADO DE CUENTAS DE USUARIOS REGISTRADOS            |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+
+    (cd "$ROOT/current" && runuser -u taji -- "$ROOT/current/.venv/bin/python" manage.py shell --settings=config.settings_production <<'PYTHON'
+from accounts.models import User
+
+users = User.objects.select_related('person', 'role').all().order_by('-date_joined')
+if not users.exists():
+    print(" No hay usuarios registrados en el sistema.")
+else:
+    print(f" {'ID':<4} | {'EMAIL':<32} | {'NOMBRE COMPLETO':<24} | {'ROL':<15} | {'ADMIN?':<6} | {'APROBADO?':<9}")
+    print("-" * 105)
+    for u in users:
+        role_name = u.role.name if u.role else ("Superuser" if u.is_superuser else "Sin Rol")
+        is_admin = "SI" if u.is_superuser else "NO"
+        is_appr = "SI" if u.is_approved else "NO"
+        name = u.full_name or "N/A"
+        print(f" {u.id:<4} | {u.email:<32} | {name:<24} | {role_name:<15} | {is_admin:<6} | {is_appr:<9}")
+PYTHON
+)
+}
+
 do_deploy_backend() {
     do_update_git
 
@@ -138,7 +232,6 @@ do_deploy_backend() {
 
     # Proceso de Despliegue / Actualizacion Zero-Downtime
     (git --git-dir="$ROOT/repository.git" fetch origin refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1) &
-    animated_progress_bar $! "Sincronizando servidor bare Git (fetch origin main)"
     SHA=$(git --git-dir="$ROOT/repository.git" rev-parse refs/remotes/origin/main)
 
     RELEASE=$(mktemp -d "$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}-XXXXXX")
@@ -410,26 +503,30 @@ while true; do
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}"
     echo -e "${BRIGHT_YELLOW}|                      MENU INTERACTIVO DE OPERACIONES                   |${RESET}"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}"
-    echo -e "|  ${BRIGHT_CYAN}[1]${RESET}  ${WHITE}[+] Instalacion Completa Inicial (PostgreSQL + Django + Nginx)${RESET}    |"
-    echo -e "|  ${BRIGHT_CYAN}[2]${RESET}  ${WHITE}[*] Actualizar Version (git pull + Migration + Zero-Downtime)${RESET}    |"
-    echo -e "|  ${BRIGHT_CYAN}[3]${RESET}  ${WHITE}[#] Sincronizar Cambios de Git (git pull origin main)${RESET}            |"
-    echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
-    echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
-    echo -e "|  ${BRIGHT_CYAN}[6]${RESET}  ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[7]${RESET}  ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[8]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
+    echo -e "|  ${BRIGHT_CYAN}[1] ${RESET} ${WHITE}[+] Instalacion Completa Inicial (PostgreSQL + Django + Nginx)${RESET}   |"
+    echo -e "|  ${BRIGHT_CYAN}[2] ${RESET} ${WHITE}[*] Actualizar Version (git pull + Migration + Zero-Downtime)${RESET}   |"
+    echo -e "|  ${BRIGHT_CYAN}[3] ${RESET} ${WHITE}[#] Sincronizar Cambios de Git (git pull origin main)${RESET}           |"
+    echo -e "|  ${BRIGHT_CYAN}[4] ${RESET} ${WHITE}[@] Crear / Actualizar Superusuario (Admin)${RESET}                      |"
+    echo -e "|  ${BRIGHT_CYAN}[5] ${RESET} ${WHITE}[=] Listar Cuentas de Usuarios Registrados${RESET}                       |"
+    echo -e "|  ${BRIGHT_CYAN}[6] ${RESET} ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[7] ${RESET} ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[8] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
+    echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
+    echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-8]: " CHOICE
+    read -p " Selecciona una opcion [1-10]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
         3) run_action "gitpull" || true ;;
-        4) run_action "backup" || true ;;
-        5) run_action "health" || true ;;
-        6) run_action "restart" || true ;;
-        7) run_action "logs" || true ;;
-        8) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        4) run_action "superuser" || true ;;
+        5) run_action "users" || true ;;
+        6) run_action "backup" || true ;;
+        7) run_action "health" || true ;;
+        8) run_action "restart" || true ;;
+        9) run_action "logs" || true ;;
+        10) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 
