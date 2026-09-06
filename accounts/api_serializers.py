@@ -23,6 +23,8 @@ class LoginResponseSerializer(MessageResponseSerializer):
 
 class MeResponseSerializer(serializers.Serializer):
     user = UserSerializer()
+    resident_units = serializers.ListField(child=serializers.DictField(), required=False)
+    linked_residents = serializers.ListField(child=serializers.DictField(), required=False)
 
 
 class RefreshResponseSerializer(serializers.Serializer):

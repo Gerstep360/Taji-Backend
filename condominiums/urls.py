@@ -1,10 +1,11 @@
-from django.urls import include, path
-from rest_framework.routers import DefaultRouter
-from .views import CondominiumViewSet, ResidentViewSet, StaffViewSet
+from rest_framework.routers import SimpleRouter
+from .views import CondominiumViewSet, ResidentViewSet, ResidentUnitViewSet, SectorViewSet, StaffViewSet, UnitViewSet
 
-app_name = "condominiums"
-router = DefaultRouter()
+router = SimpleRouter()
 router.register("condominiums", CondominiumViewSet, basename="condominium")
 router.register("staff", StaffViewSet, basename="staff")
 router.register("residents", ResidentViewSet, basename="resident")
-urlpatterns = [path("", include(router.urls))]
+router.register("sectors", SectorViewSet, basename="sector")
+router.register("units", UnitViewSet, basename="unit")
+router.register("resident-units", ResidentUnitViewSet, basename="resident-unit")
+urlpatterns = router.urls

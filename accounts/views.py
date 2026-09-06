@@ -27,6 +27,7 @@ from .api_serializers import (
 )
 from .cookies import clear_auth_cookies, set_auth_cookies
 from .models import LoginAttempt, User
+from condominiums.models import ResidentUnit
 from .serializers import (
     ForgotPasswordSerializer,
     LoginSerializer,
@@ -283,7 +284,50 @@ class MeView(generics.GenericAPIView):
         responses={200: MeResponseSerializer, 401: AUTH_ERROR_RESPONSE},
     )
     def get(self, request):
-        return Response({"user": UserSerializer(request.user).data})
+        user_data = UserSerializer(request.user).data
+        resident_units = []
+        linked_residents = []
+        if request.user.person_id:
+            active_links = ResidentUnit.objects.filter(
+                resident__person_id=request.user.person_id,
+                end_date__isnull=True,
+            ).select_related("unit", "resident__person")
+            resident_units = [
+                {
+                    "id": link.id,
+                    "unit_id": link.unit_id,
+                    "unit_code": link.unit.code,
+                    "relation_type": link.relation_type,
+                    "relation_type_display": link.get_relation_type_display(),
+                    "is_primary": link.is_primary,
+                    "start_date": link.start_date,
+                }
+                for link in active_links
+            ]
+            unit_ids = [link.unit_id for link in active_links]
+            linked_links = ResidentUnit.objects.filter(
+                unit_id__in=unit_ids,
+                end_date__isnull=True,
+            ).exclude(resident__person_id=request.user.person_id).select_related("resident__person", "unit")
+            linked_residents = [
+                {
+                    "resident_id": link.resident_id,
+                    "full_name": link.resident.person.full_name,
+                    "unit_code": link.unit.code,
+                    "relation_type": link.relation_type,
+                    "relation_type_display": link.get_relation_type_display(),
+                }
+                for link in linked_links
+            ]
+        return Response(
+            {
+                "user": {
+                    **user_data,
+                    "resident_units": resident_units,
+                    "linked_residents": linked_residents,
+                },
+            }
+        )
 
 
 class ForgotPasswordView(generics.GenericAPIView):
