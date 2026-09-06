@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import Person, Role, SystemPermission, User
 
-from .models import Condominium, Sector, Staff, Unit
+from .models import Condominium, Resident, ResidentUnit, Sector, Staff, Unit
 
 
 class StaffApiTests(APITestCase):
@@ -356,6 +356,102 @@ class UnitApiTests(APITestCase):
         role = Role.objects.get(slug="directiva")
         other = User.objects.create_user(
             email="board.units@taji.test",
+            password="ClaveSegura2026!",
+            first_name="Dina",
+            last_name="Directiva",
+            role=role,
+        )
+        self.client.force_authenticate(other)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class ResidentUnitApiTests(APITestCase):
+    def setUp(self):
+        permission, _ = SystemPermission.objects.get_or_create(
+            code="manage_residents",
+            defaults={"name": "Gestionar residentes", "module": "condominiums"},
+        )
+        role, _ = Role.objects.get_or_create(
+            slug="administrador", defaults={"name": "Administrador"}
+        )
+        role.permissions.add(permission)
+        self.user = User.objects.create_user(
+            email="admin.links@taji.test",
+            password="ClaveSegura2026!",
+            first_name="Ada",
+            last_name="Admin",
+            role=role,
+        )
+        self.client.force_authenticate(self.user)
+        person = Person.objects.create(
+            first_name="Residente", last_name="Activo", document_number="CU06-1"
+        )
+        self.resident = Resident.objects.create(person=person)
+        self.unit = Unit.objects.create(code="CU06-1", unit_type=Unit.Type.APARTMENT)
+        self.list_url = reverse("resident-unit-list")
+
+    def test_create_association_returns_resident_and_unit_labels(self):
+        response = self.client.post(
+            self.list_url,
+            {
+                "resident": self.resident.id,
+                "unit": self.unit.id,
+                "relation_type": ResidentUnit.Relation.OWNER,
+                "is_primary": True,
+                "start_date": "2026-09-01",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data["resident_name"], "Residente Activo")
+        self.assertEqual(response.data["unit_code"], "CU06-1")
+        self.assertEqual(response.data["relation_type_display"], "Propietario")
+
+    def test_duplicate_active_association_is_rejected(self):
+        ResidentUnit.objects.create(
+            resident=self.resident,
+            unit=self.unit,
+            relation_type=ResidentUnit.Relation.TENANT,
+        )
+        response = self.client.post(
+            self.list_url,
+            {"resident": self.resident.id, "unit": self.unit.id, "relation_type": ResidentUnit.Relation.OWNER},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_finishing_association_preserves_history_and_allows_new_link(self):
+        link = ResidentUnit.objects.create(
+            resident=self.resident,
+            unit=self.unit,
+            relation_type=ResidentUnit.Relation.TENANT,
+            start_date="2026-01-01",
+        )
+        response = self.client.patch(
+            reverse("resident-unit-detail", args=[link.id]),
+            {"end_date": "2026-08-31"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(ResidentUnit.objects.filter(resident=self.resident, unit=self.unit).count(), 1)
+
+        replacement = self.client.post(
+            self.list_url,
+            {
+                "resident": self.resident.id,
+                "unit": self.unit.id,
+                "relation_type": ResidentUnit.Relation.OWNER,
+                "start_date": "2026-09-01",
+            },
+            format="json",
+        )
+        self.assertEqual(replacement.status_code, status.HTTP_201_CREATED, replacement.data)
+
+    def test_user_without_manage_residents_is_forbidden(self):
+        role = Role.objects.get(slug="directiva")
+        other = User.objects.create_user(
+            email="board.links@taji.test",
             password="ClaveSegura2026!",
             first_name="Dina",
             last_name="Directiva",

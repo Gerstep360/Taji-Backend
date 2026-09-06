@@ -19,3 +19,13 @@ class CanManageUnits(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return bool(user and user.is_authenticated and user.has_system_permission("manage_units"))
+
+
+class CanManageResidents(BasePermission):
+    """Limita CU06 a usuarios con permiso de gestión de residentes."""
+
+    message = "No tienes permiso para gestionar residentes y sus unidades."
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and user.has_system_permission("manage_residents"))
