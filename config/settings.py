@@ -165,6 +165,11 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
     "SCHEMA_PATH_PREFIX": r"/api/v1",
+    "ENUM_NAME_OVERRIDES": {
+        "ResidentStatusEnum": "condominiums.models.Resident.Status",
+        "StaffStatusEnum": "condominiums.models.Staff.Status",
+        "UnitStatusEnum": "condominiums.models.Unit.Status",
+    },
     "TAGS": [
         {"name": "Autenticación", "description": "CU01: Registro y ciclo de sesión."},
         {"name": "Roles y Permisos", "description": "CU02: Gestión de roles, permisos RBAC y aprobación de residentes."},

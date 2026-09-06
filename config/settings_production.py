@@ -17,6 +17,9 @@ SECURE_SSL_REDIRECT = True
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
 SECURE_HSTS_PRELOAD = False
+# This installer controls one hostname, not its descendant domains or the browser
+# preload list. Keep all other deployment checks enabled and fatal in vps.sh.
+SILENCED_SYSTEM_CHECKS = ["security.W005", "security.W021"]
 STATIC_ROOT = env("STATIC_ROOT", default=str(BASE_DIR / "staticfiles"))
 MEDIA_ROOT = env("MEDIA_ROOT", default="/var/lib/taji/media")
 MEDIA_URL = "/media/"

@@ -15,6 +15,11 @@
 
 # TAJI Backend API — Sistema de Gestión de Condominios
 
+La organización actual por CU y los detalles de integración están en
+[Paquetes y Sprint 1](docs/PAQUETES-Y-SPRINT1.md). Para instalar o actualizar el
+backend en un VPS con PostgreSQL, Nginx y HTTPS, consulta
+[Despliegue](deploy/README.md).
+
 Plataforma backend desarrollada con **Django 5**, **Django REST Framework (DRF)** y **PostgreSQL / SQLite**. Ofrece autenticación basada en **JWT (SimpleJWT)** con RBAC (Control de Acceso Basado en Roles), 7 roles, 32 permisos y un modelo de dominio estructurado en 47 tablas.
 
 ---

@@ -122,7 +122,9 @@ ReadWritePaths=/var/lib/taji /var/cache/taji
 [Install]
 WantedBy=multi-user.target
 SERVICE
-  install -m 0755 "${BASH_SOURCE[0]}" /usr/local/sbin/taji-deploy
+  if [[ $(readlink -f "${BASH_SOURCE[0]}") != /usr/local/sbin/taji-deploy ]]; then
+    install -m 0755 "${BASH_SOURCE[0]}" /usr/local/sbin/taji-deploy
+  fi
   systemctl daemon-reload
 fi
 [[ -f $ENV_FILE && -d $ROOT/repository.git ]] || fail 'Ejecutar install primero.'
@@ -138,8 +140,8 @@ fi
 if [[ -n $OLD_SHA ]]; then
   git --git-dir="$ROOT/repository.git" merge-base --is-ancestor "$OLD_SHA" "$SHA" || fail 'main fue reescrito; revisar antes de desplegar.'
 fi
-RELEASE="$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}"
-install -d -m 0755 "$RELEASE"
+RELEASE=$(mktemp -d "$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}-XXXXXX")
+chmod 0755 "$RELEASE"
 git --git-dir="$ROOT/repository.git" archive "$SHA" | tar -x -C "$RELEASE"
 printf '%s\n' "$SHA" >"$RELEASE/.release-sha"
 chown -R taji:taji "$RELEASE"
@@ -154,11 +156,6 @@ manage collectstatic --noinput
 # Nginx needs read access only to static output; uploaded private documents are not public.
 chmod -R a+rX "$RELEASE/staticfiles"
 BACKUP="/var/backups/taji/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}.dump"
-runuser -u postgres -- pg_dump -Fc taji >"$BACKUP"
-[[ -s $BACKUP ]] || fail 'Respaldo vacío.'
-runuser -u postgres -- pg_restore --list <"$BACKUP" >/dev/null
-cp "$ENV_FILE" "${BACKUP%.dump}.env"
-echo "Respaldo: $BACKUP"
 # From this point failures keep the service stopped: never run old code against a partly migrated DB.
 STOPPED=0
 on_error() {
@@ -167,13 +164,23 @@ on_error() {
     echo "Despliegue detenido; respaldo: $BACKUP. Revisar logs y recuperar manualmente según deploy/README.md." >&2
   fi
 }
-trap on_error ERR
+trap on_error EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 systemctl stop taji
 STOPPED=1
+# Stop application writes before taking the rollback snapshot.
+runuser -u postgres -- pg_dump -Fc taji >"$BACKUP"
+[[ -s $BACKUP ]] || fail 'Respaldo vacío.'
+runuser -u postgres -- pg_restore --list <"$BACKUP" >/dev/null
+cp "$ENV_FILE" "${BACKUP%.dump}.env"
+tar -czf "${BACKUP%.dump}.media.tar.gz" -C /var/lib/taji media
+echo "Respaldo: $BACKUP"
 manage migrate --noinput
 if [[ -z $OLD_SHA ]]; then manage seed_rbac; fi
-ln -s "$RELEASE" "$ROOT/current.next"
-mv -Tf "$ROOT/current.next" "$ROOT/current"
+NEXT_LINK="$ROOT/.current-${SHA}-$$"
+ln -s "$RELEASE" "$NEXT_LINK"
+mv -Tf "$NEXT_LINK" "$ROOT/current"
 nginx -t
 systemctl enable taji
 systemctl restart taji
@@ -185,6 +192,8 @@ for attempt in {1..20}; do
   sleep 1
 done
 [[ $healthy == 1 ]] || fail 'Falló comprobación HTTPS del servicio.'
+bash -n "$RELEASE/deploy/vps.sh"
+install -m 0755 "$RELEASE/deploy/vps.sh" /usr/local/sbin/taji-deploy
 STOPPED=0
-trap - ERR
+trap - EXIT INT TERM
 echo "Desplegado $SHA. API: https://$DOMAIN/api/v1/docs/"

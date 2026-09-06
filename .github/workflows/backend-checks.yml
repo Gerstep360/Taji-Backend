@@ -1,0 +1,61 @@
+name: Backend checks
+
+on:
+  push:
+    branches: [main, Gerstep]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  django:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: taji_test
+          POSTGRES_PASSWORD: local-ci-password
+          POSTGRES_DB: taji_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U taji_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://taji_test:local-ci-password@127.0.0.1:5432/taji_test
+      DJANGO_SECRET_KEY: ci-verification-only-abcdefghijklmnopqrstuvwxyz-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test --noinput
+      - run: python manage.py check --deploy --fail-level WARNING --settings=config.settings_production
+        env:
+          DEBUG: "False"
+          ALLOWED_HOSTS: api.taji.test
+          FRONTEND_URLS: https://web.taji.test
+          CACHE_DIR: /tmp/taji-ci-cache
+      - run: bash -n deploy/vps.sh && shellcheck -x -e SC1091 deploy/vps.sh deploy/tests/vps_smoke.sh
+
+  vps-install-and-update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install, update, no-op, and migration failure in disposable Ubuntu
+        run: sudo env GITHUB_ACTIONS=true bash deploy/tests/vps_smoke.sh "$GITHUB_WORKSPACE"
+      - name: Service diagnostics
+        if: always()
+        run: |
+          sudo journalctl -u taji -u nginx --no-pager -n 150 || true
+          sudo systemctl status taji nginx postgresql --no-pager || true
