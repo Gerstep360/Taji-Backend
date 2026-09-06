@@ -1,66 +1,172 @@
 # ==============================================================================
-# Script de Instalación de Requerimientos - Backend Taji
+# Script de Instalación Interactivo - Backend Taji
 # ==============================================================================
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "   TAJI BACKEND - Instalación de Entorno y Deps   " -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
-
-# 1. Verificar presencia de Python
-$pythonExecutable = $null
-if (Get-Command python -ErrorAction SilentlyContinue) {
-    $pythonExecutable = "python"
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    $pythonExecutable = "py"
-} else {
-    throw "Python no está instalado o no se encuentra en el PATH del sistema."
+# --- Funciones de Diseño y Animación GUI-Style ---
+function Show-TajiBanner {
+    param([string]$Subtitle = "INSTALADOR DE BACKEND")
+    Clear-Host
+    Write-Host " +----------------------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host " |   TTTTT   AAA    JJJJJ  IIIII                                        |" -ForegroundColor Cyan
+    Write-Host " |     T    A   A     J      I     S I S T E M A                        |" -ForegroundColor Cyan
+    Write-Host " |     T    AAAAA     J      I     C O N D O M I N I O S                |" -ForegroundColor Yellow
+    Write-Host " |     T    A   A  J  J      I                                          |" -ForegroundColor Magenta
+    Write-Host " |     T    A   A   JJ     IIIII   * DEPLOYMENT ENGINE (DJANGO)         |" -ForegroundColor Magenta
+    Write-Host " +----------------------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "       === $Subtitle ===" -ForegroundColor Green
+    Write-Host ""
 }
 
-Write-Host "[1/4] Python detectado: $pythonExecutable" -ForegroundColor Green
+function Show-ProgressBarTask {
+    param(
+        [scriptblock]$Task,
+        [string]$Message,
+        [object[]]$ArgumentList = @()
+    )
+    $spin = @('|', '/', '-', '\')
+    $job = Start-Job -ScriptBlock $Task -ArgumentList $ArgumentList
+    $step = 0
+    $width = 25
 
-# 2. Crear entorno virtual si no existe
-if (-not (Test-Path ".venv")) {
-    Write-Host "[2/4] Creando entorno virtual (.venv)..." -ForegroundColor Yellow
-    & $pythonExecutable -m venv .venv
-    Write-Host "      Entorno virtual creado exitosamente." -ForegroundColor Green
-} else {
-    Write-Host "[2/4] Entorno virtual (.venv) ya existe." -ForegroundColor Green
-}
-
-$venvPython = ".\.venv\Scripts\python.exe"
-if (-not (Test-Path $venvPython)) {
-    throw "No se encontró el ejecutable de Python en el entorno virtual ($venvPython)."
-}
-
-# 3. Actualizar pip e instalar requerimientos
-Write-Host "[3/4] Actualizando pip e instalando dependencias desde requirements.txt..." -ForegroundColor Yellow
-& $venvPython -m pip install --upgrade pip --quiet
-& $venvPython -m pip install -r requirements.txt
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "      Dependencias instaladas correctamente." -ForegroundColor Green
-} else {
-    throw "Ocurrió un error al instalar las dependencias."
-}
-
-# 4. Archivo .env
-if (-not (Test-Path ".env")) {
-    if (Test-Path ".env.example") {
-        Write-Host "[4/4] Copiando .env.example -> .env ..." -ForegroundColor Yellow
-        Copy-Item ".env.example" ".env"
-        Write-Host "      Archivo .env creado desde .env.example." -ForegroundColor Green
-    } else {
-        Write-Host "[4/4] AVISO: No se encontró .env.example para copiar." -ForegroundColor Yellow
+    while ($job.State -eq 'Running') {
+        $frame = $spin[$step % 4]
+        $filledLen = ($step % $width) + 1
+        $fill = "█" * $filledLen
+        $empty = "░" * ($width - $filledLen)
+        
+        Write-Host "`r [$frame] $Message... [$fill$empty]" -ForegroundColor Yellow -NoNewline
+        Start-Sleep -Milliseconds 80
+        $step++
     }
-} else {
-    Write-Host "[4/4] Archivo .env ya existe." -ForegroundColor Green
+    $result = Receive-Job -Job $job
+    Remove-Job -Job $job -Force
+    
+    $fullBar = "█" * $width
+    if ($job.State -eq 'Completed') {
+        Write-Host "`r [OK] $Message... [$fullBar] 100% COMPLETADO  " -ForegroundColor Green
+    } else {
+        Write-Host "`r [ERROR] $Message... [FALLO EN EL PROCESO]     " -ForegroundColor Red
+        throw "Error al ejecutar la tarea."
+    }
 }
 
-Write-Host "`n==================================================" -ForegroundColor Cyan
-Write-Host "   Instalación completada con éxito." -ForegroundColor Green
-Write-Host "   Puedes iniciar el servidor ejecutando:" -ForegroundColor Cyan
-Write-Host "   .\iniciar.ps1" -ForegroundColor Yellow
-Write-Host "==================================================" -ForegroundColor Cyan
+function Get-TajiLanIp {
+    $candidate = Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.NetAdapter.Status -eq "Up" -and
+            $null -ne $_.IPv4Address -and
+            $null -ne $_.IPv4DefaultGateway -and
+            $_.IPv4Address.IPAddress -notlike "169.254.*"
+        } |
+        Sort-Object { $_.NetAdapter.InterfaceMetric } |
+        Select-Object -First 1
+
+    if ($null -ne $candidate) {
+        return $candidate.IPv4Address.IPAddress
+    }
+    return "127.0.0.1"
+}
+
+# --- Inicio del Asistente Interactivo ---
+Show-TajiBanner -Subtitle "INSTALADOR INTERACTIVO BACKEND (DJANGO)"
+
+$detectedIp = Get-TajiLanIp
+Write-Host " +----------------------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host " | Detector de red: IP Local / Servidor = $detectedIp" -ForegroundColor Cyan
+Write-Host " +----------------------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host ""
+
+$inputIp = Read-Host " Configurar IP / Host para Backend [$detectedIp]"
+if ([string]::IsNullOrWhiteSpace($inputIp)) { $inputIp = $detectedIp }
+
+$inputPort = Read-Host " Puerto del servidor Backend API [8000]"
+if ([string]::IsNullOrWhiteSpace($inputPort)) { $inputPort = "8000" }
+
+$inputSubpath = Read-Host " Sub-ruta de aplicacion [/taji]"
+if ([string]::IsNullOrWhiteSpace($inputSubpath)) { $inputSubpath = "/taji" }
+if (-not $inputSubpath.StartsWith("/")) { $inputSubpath = "/$inputSubpath" }
+
+Write-Host ""
+Write-Host " +----------------------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host " | Resumen de Configuracion Seleccionada:" -ForegroundColor Yellow
+Write-Host " |   * IP Servidor:  $inputIp" -ForegroundColor Cyan
+Write-Host " |   * Puerto API:   $inputPort" -ForegroundColor Cyan
+Write-Host " |   * Sub-ruta Web: $inputSubpath" -ForegroundColor Cyan
+Write-Host " +----------------------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host ""
+
+$confirm = Read-Host " Deseas proceder con la instalacion? (S/n) [S]"
+if (-not [string]::IsNullOrWhiteSpace($confirm) -and $confirm -notlike "s*") {
+    Write-Host "`n Instalacion cancelada por el usuario." -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host ""
+
+# 1. Verificar Python
+Show-ProgressBarTask -Message "Verificando instalacion de Python" -Task {
+    if (Get-Command python -ErrorAction SilentlyContinue) { exit 0 }
+    if (Get-Command py -ErrorAction SilentlyContinue) { exit 0 }
+    throw "Python no encontrado"
+}
+
+$pythonExecutable = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "py" }
+
+# 2. Entorno virtual
+if (-not (Test-Path ".venv")) {
+    Show-ProgressBarTask -Message "Creando entorno virtual Python (.venv)" -Task {
+        param($py)
+        & $py -m venv .venv
+    } -ArgumentList $pythonExecutable
+} else {
+    Write-Host " [OK] Entorno virtual (.venv) existente detectado" -ForegroundColor Green
+}
+
+$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    throw "No se encontro $venvPython"
+}
+
+# 3. Instalacion de dependencias
+Show-ProgressBarTask -Message "Instalando paquetes desde requirements.txt" -Task {
+    param($vPy)
+    & $vPy -m pip install --upgrade pip --quiet 2>&1 | Out-Null
+    & $vPy -m pip install -r requirements.txt --quiet 2>&1 | Out-Null
+} -ArgumentList $venvPython
+
+# 4. Creación/Configuración de .env
+Show-ProgressBarTask -Message "Configurando variables de entorno (.env)" -Task {
+    param($ip, $port, $subpath, $rootDir)
+    $envPath = Join-Path $rootDir ".env"
+    $envExample = Join-Path $rootDir ".env.example"
+    
+    if (-not (Test-Path $envPath) -and (Test-Path $envExample)) {
+        Copy-Item $envExample $envPath
+    }
+    
+    $allowedHosts = "localhost,127.0.0.1,0.0.0.0,$ip"
+    $frontendUrls = "http://localhost:4200,http://127.0.0.1:4200,http://${ip}:4200,http://${ip}${subpath},http://${ip}:$port${subpath}"
+    $resetUrl = "http://${ip}${subpath}/restablecer-contrasena"
+    
+    $lines = @(
+        "SECRET_KEY=taji-secret-key-production-change-me",
+        "DEBUG=True",
+        "ALLOWED_HOSTS=$allowedHosts",
+        "FRONTEND_URLS=$frontendUrls",
+        "PASSWORD_RESET_URL=$resetUrl",
+        "DATABASE_URL=sqlite:///db.sqlite3"
+    )
+    $content = $lines -join "`n"
+    Set-Content -Path $envPath -Value $content -Encoding UTF8
+} -ArgumentList $inputIp, $inputPort, $inputSubpath, $PSScriptRoot
+
+Write-Host ""
+Write-Host " +----------------------------------------------------------------------+" -ForegroundColor Green
+Write-Host " |   INSTALACION DEL BACKEND COMPLETADA EXITOSAMENTE!                   |" -ForegroundColor Green
+Write-Host " +----------------------------------------------------------------------+" -ForegroundColor Green
+Write-Host " Puedes iniciar el servidor Django ejecutando:" -ForegroundColor Yellow
+Write-Host "   .\iniciar.ps1" -ForegroundColor Cyan
+Write-Host ""
