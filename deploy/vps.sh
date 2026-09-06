@@ -112,6 +112,30 @@ do_update_git() {
     fi
 }
 
+show_backend_logs() {
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|                  LOGS DE OPERACION Y SERVICIOS BACKEND                 |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+
+    echo -e "${BRIGHT_YELLOW}=== [1/3] ARCHIVO DE CONFIGURACION BACKEND (/etc/taji/backend.env) ===${RESET}"
+    if [[ -f /etc/taji/backend.env ]]; then
+        cat /etc/taji/backend.env
+    else
+        echo -e "${RED}No se encontro /etc/taji/backend.env${RESET}"
+    fi
+
+    echo -e "\n${BRIGHT_YELLOW}=== [2/3] LOGS RECIENTES DEL SERVICIO DJANGO GUNICORN (taji.service) ===${RESET}"
+    journalctl -u taji -n 35 --no-pager || echo -e "${RED}No se pudieron leer los logs de taji.service${RESET}"
+
+    echo -e "\n${BRIGHT_YELLOW}=== [3/3] LOGS RECIENTES DE ERROR NGINX (/var/log/nginx/error.log) ===${RESET}"
+    if [[ -f /var/log/nginx/error.log ]]; then
+        tail -n 25 /var/log/nginx/error.log
+    else
+        echo -e "${GRAY}No hay errores recientes en /var/log/nginx/error.log${RESET}"
+    fi
+}
+
 do_deploy_backend() {
     do_update_git
 
@@ -181,6 +205,11 @@ do_deploy_backend() {
 
 run_action() {
     local MODE=$1
+
+    if [[ $MODE == "logs" ]]; then
+        show_backend_logs
+        return 0
+    fi
 
     if [[ $MODE == "gitpull" ]]; then
         do_update_git
@@ -382,10 +411,11 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
     echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
     echo -e "|  ${BRIGHT_CYAN}[6]${RESET}  ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[7]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
+    echo -e "|  ${BRIGHT_CYAN}[7]${RESET}  ${WHITE}[~] Ver Logs de Django (Gunicorn), Nginx y Postgres${RESET}             |"
+    echo -e "|  ${BRIGHT_CYAN}[8]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-7]: " CHOICE
+    read -p " Selecciona una opcion [1-8]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
@@ -393,7 +423,8 @@ while true; do
         4) run_action "backup" || true ;;
         5) run_action "health" || true ;;
         6) run_action "restart" || true ;;
-        7) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        7) run_action "logs" || true ;;
+        8) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 
