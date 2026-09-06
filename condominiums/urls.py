@@ -1,9 +1,14 @@
-from rest_framework.routers import SimpleRouter
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
-from .views import StaffViewSet
+from .views import CondominiumViewSet, StaffViewSet
 
+app_name = "condominiums"
 
-router = SimpleRouter()
-router.register("staff", StaffViewSet, basename="staff")
+router = DefaultRouter()
+router.register(r"condominiums", CondominiumViewSet, basename="condominium")
+router.register(r"staff", StaffViewSet, basename="staff")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("", include(router.urls)),
+]
