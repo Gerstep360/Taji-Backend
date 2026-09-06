@@ -161,6 +161,12 @@ do_deploy_backend() {
 run_action() {
     local MODE=$1
 
+    if [[ $MODE == "gitpull" ]]; then
+        do_update_git
+        echo -e "${BRIGHT_GREEN}[OK] Repositorio Git actualizado correctamente.${RESET}"
+        return 0
+    fi
+
     if [[ $MODE == "restart" ]]; then
         [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env. Ejecuta la opcion [1] primero."
         [[ -x /opt/taji/current/.venv/bin/gunicorn ]] || fail "El ejecutable Gunicorn no existe en /opt/taji/current. Ejecuta la opcion [1] primero."
@@ -350,21 +356,23 @@ while true; do
     echo -e "${BRIGHT_YELLOW}|                      MENU INTERACTIVO DE OPERACIONES                   |${RESET}"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}"
     echo -e "|  ${BRIGHT_CYAN}[1]${RESET}  ${WHITE}[+] Instalacion Completa Inicial (PostgreSQL + Django + Nginx)${RESET}    |"
-    echo -e "|  ${BRIGHT_CYAN}[2]${RESET}  ${WHITE}[*] Actualizar Version (Zero-Downtime Migration + Static Update)${RESET}  |"
-    echo -e "|  ${BRIGHT_CYAN}[3]${RESET}  ${WHITE}[#] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
-    echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
-    echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[6]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
+    echo -e "|  ${BRIGHT_CYAN}[2]${RESET}  ${WHITE}[*] Actualizar Version (git pull + Migration + Zero-Downtime)${RESET}    |"
+    echo -e "|  ${BRIGHT_CYAN}[3]${RESET}  ${WHITE}[#] Sincronizar Cambios de Git (git pull origin main)${RESET}            |"
+    echo -e "|  ${BRIGHT_CYAN}[4]${RESET}  ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                   |"
+    echo -e "|  ${BRIGHT_CYAN}[5]${RESET}  ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                   |"
+    echo -e "|  ${BRIGHT_CYAN}[6]${RESET}  ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[7]${RESET}  ${WHITE}[x] Salir${RESET}                                                         |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-6]: " CHOICE
+    read -p " Selecciona una opcion [1-7]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
-        3) run_action "backup" || true ;;
-        4) run_action "health" || true ;;
-        5) run_action "restart" || true ;;
-        6) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        3) run_action "gitpull" || true ;;
+        4) run_action "backup" || true ;;
+        5) run_action "health" || true ;;
+        6) run_action "restart" || true ;;
+        7) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 
