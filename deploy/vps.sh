@@ -291,13 +291,13 @@ chmod 0755 "$RELEASE"
 git --git-dir="$ROOT/repository.git" archive "$SHA" | tar -x -C "$RELEASE"
 printf '%s\n' "$SHA" >"$RELEASE/.release-sha"
 ln -sf "$ENV_FILE" "$RELEASE/.env"
+chown -R taji:taji "$RELEASE"
 
 (runuser -u taji -- python3 -m venv "$RELEASE/.venv" && \
  runuser -u taji -- "$RELEASE/.venv/bin/pip" install --upgrade pip --quiet >/dev/null 2>&1 && \
  runuser -u taji -- "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt" gunicorn --quiet >/dev/null 2>&1) &
 animated_progress_bar $! "Creando entorno virtual Python e instalando Django y Gunicorn"
 
-chown -R taji:taji "$RELEASE"
 chmod -R a+rX "$RELEASE"
 chmod +x "$RELEASE/.venv/bin/"* 2>/dev/null || true
 
