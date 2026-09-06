@@ -9,6 +9,7 @@ from accounts.rbac import (
     FORBIDDEN_PERMISSIONS_BY_ROLE,
     MANDATORY_PERMISSIONS_BY_ROLE,
 )
+from condominiums.models import Resident
 
 
 class SystemPermissionSerializer(serializers.ModelSerializer):
@@ -208,6 +209,10 @@ class ResidentReviewSerializer(serializers.Serializer):
             user.is_approved = True
             user.is_active = True
             user.save(update_fields=["is_approved", "is_active", "updated_at"])
+            # CU05: un Residente aprobado debe aparecer en el directorio del
+            # Administrador; se reutiliza la misma Person, sin duplicarla.
+            if user.person_id and not Resident.objects.filter(person_id=user.person_id).exists():
+                Resident.objects.create(person=user.person)
         else:
             user.is_approved = False
             user.is_active = False

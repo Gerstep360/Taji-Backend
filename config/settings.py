@@ -168,6 +168,7 @@ SPECTACULAR_SETTINGS = {
     "TAGS": [
         {"name": "Autenticación", "description": "CU01: Registro y ciclo de sesión."},
         {"name": "Roles y Permisos", "description": "CU02: Gestión de roles, permisos RBAC y aprobación de residentes."},
+        {"name": "Residentes", "description": "CU05: CRUD de residentes y copropietarios."},
         {"name": "Personal", "description": "CU07: CRUD y clasificación del personal del condominio."},
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],

@@ -7,6 +7,7 @@ from accounts.rbac import (
     FORBIDDEN_PERMISSIONS_BY_ROLE,
     MANDATORY_PERMISSIONS_BY_ROLE,
 )
+from condominiums.models import Resident
 
 PASSWORD = "TajiSeguro2026!"
 
@@ -342,6 +343,41 @@ class ResidentApprovalTests(APITestCase):
         self.pending_user.refresh_from_db()
         self.assertTrue(self.pending_user.is_approved)
         self.assertTrue(self.pending_user.is_active)
+
+    def test_approving_resident_creates_cu05_resident_record(self):
+        """CU05: aprobar un Residente crea su registro en el directorio del Administrador."""
+        self._login(self.admin_user)
+        self.assertFalse(Resident.objects.filter(person_id=self.pending_user.person_id).exists())
+
+        resp = self.client.patch(
+            self.review_url(self.pending_user.pk), {"action": "approve"}, format="json"
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        resident = Resident.objects.get(person_id=self.pending_user.person_id)
+        self.assertEqual(resident.status, Resident.Status.ACTIVE)
+
+    def test_approving_resident_twice_does_not_duplicate_resident_record(self):
+        """No se debe crear un segundo Resident si ya existe uno para esa Person."""
+        Resident.objects.create(person_id=self.pending_user.person_id)
+        self._login(self.admin_user)
+        self.pending_user.is_approved = False
+        self.pending_user.save(update_fields=["is_approved", "updated_at"])
+
+        resp = self.client.patch(
+            self.review_url(self.pending_user.pk), {"action": "approve"}, format="json"
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(Resident.objects.filter(person_id=self.pending_user.person_id).count(), 1)
+
+    def test_rejecting_resident_does_not_create_resident_record(self):
+        self._login(self.admin_user)
+        resp = self.client.patch(
+            self.review_url(self.pending_user.pk), {"action": "reject"}, format="json"
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertFalse(Resident.objects.filter(person_id=self.pending_user.person_id).exists())
 
     def test_approved_resident_gets_permissions(self):
         """RN6: Después de aprobar, el Residente obtiene permisos del rol."""

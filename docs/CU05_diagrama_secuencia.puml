@@ -1,0 +1,65 @@
+@startuml
+title CU05 · Gestionar residentes y copropietarios · Diagrama de secuencia
+
+actor Administrador
+boundary "Web Taji\nPantalla Residentes y copropietarios" as Web
+control "ResidentApi\nAngular" as WebApi
+control "ResidentViewSet\nDjango REST" as View
+control "CanManageResidents" as Permission
+control "ResidentSerializer" as Serializer
+database "PostgreSQL\nPerson + Resident" as DB
+
+Administrador -> Web: Abre Residentes y copropietarios
+Web -> WebApi: list(filtros, página)
+WebApi -> View: GET /api/v1/residents/
+View -> Permission: validar manage_residents
+
+alt Sin permiso
+  Permission --> View: denegado
+  View --> WebApi: 403 permission_denied
+  WebApi --> Web: mostrar acceso denegado
+else Autorizado
+  Permission --> View: permitido
+  View -> DB: SELECT Resident JOIN Person\n+ búsqueda + filtro de estado + paginación
+  DB --> View: residentes encontrados
+  View --> WebApi: 200 pagination + results
+  WebApi --> Web: renderizar directorio
+end
+
+group Registrar o editar residente
+  Administrador -> Web: Completa formulario y guarda
+  Web -> WebApi: create(payload) / update(id, payload)
+  WebApi -> View: POST /residents/ o PATCH /residents/{id}/
+  View -> Permission: validar manage_residents
+  Permission --> View: permitido
+  View -> Serializer: validar datos personales y de residente
+  alt Documento duplicado o datos inválidos
+    Serializer --> View: errores por campo\n(ej. document_number ya existe)
+    View --> WebApi: 400 validation_error
+    WebApi --> Web: marcar campos y explicar corrección
+  else Datos válidos
+    Serializer -> DB: BEGIN
+    Serializer -> DB: INSERT/UPDATE Person
+    Serializer -> DB: INSERT/UPDATE Resident
+    Serializer -> DB: COMMIT
+    DB --> Serializer: registro guardado
+    Serializer --> View: Resident + datos Person
+    View --> WebApi: 201 Created / 200 OK
+    WebApi --> Web: confirmar y actualizar directorio
+  end
+end
+
+group Activar / desactivar residente
+  Administrador -> Web: Confirma desactivar (o reactivar)
+  Web -> WebApi: update(id, {status})
+  WebApi -> View: PATCH /api/v1/residents/{id}/
+  View -> Permission: validar manage_residents
+  Permission --> View: permitido
+  View -> Serializer: aplicar transición de estado
+  Serializer -> DB: UPDATE Resident\nstatus + deactivated_at\n(se fija al desactivar, se limpia al reactivar)
+  DB --> Serializer: estado actualizado
+  Serializer --> View: Resident actualizado
+  View --> WebApi: 200 OK
+  WebApi --> Web: reflejar nuevo estado sin eliminar el registro
+end
+@enduml

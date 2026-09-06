@@ -1,4 +1,5 @@
 from django.contrib.auth import password_validation
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
 
@@ -85,7 +86,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             first_name=attrs.get("first_name", ""),
             last_name=attrs.get("last_name", ""),
         )
-        password_validation.validate_password(attrs["password"], candidate)
+        try:
+            password_validation.validate_password(attrs["password"], candidate)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({"password": error.messages}) from error
         return attrs
 
     def create(self, validated_data):
@@ -103,12 +107,24 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         try:
             with transaction.atomic():
-                person = Person.objects.create(
-                    first_name=first_name,
-                    last_name=last_name,
-                    phone=phone,
-                    contact_email=data["email"],
-                )
+                # Si el Administrador ya registró a esta persona en CU05 (Person con el
+                # mismo correo de contacto y sin cuenta todavía), se reutiliza esa Person
+                # en vez de crear una identidad duplicada.
+                person = Person.objects.filter(
+                    contact_email__iexact=data["email"], user__isnull=True
+                ).first()
+                if person is not None:
+                    person.first_name = first_name
+                    person.last_name = last_name
+                    person.phone = phone
+                    person.save(update_fields=("first_name", "last_name", "phone", "updated_at"))
+                else:
+                    person = Person.objects.create(
+                        first_name=first_name,
+                        last_name=last_name,
+                        phone=phone,
+                        contact_email=data["email"],
+                    )
                 return User.objects.create_user(
                     password=password,
                     role=resident_role,
