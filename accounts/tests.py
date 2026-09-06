@@ -15,6 +15,7 @@ from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from config.api import TajiPageNumberPagination
+from condominiums.models import Resident, ResidentUnit, Unit
 from .models import LoginAttempt, Person, Role, SystemPermission, User
 from .rbac import ROLE_DEFINITIONS
 
@@ -120,6 +121,31 @@ class AuthApiTests(APITestCase):
         me = self.client.get("/api/v1/auth/me/")
         self.assertEqual(me.status_code, status.HTTP_200_OK)
         self.assertEqual(me.data["user"]["role"]["slug"], "residente")
+
+    def test_me_includes_resident_units_and_linked_residents(self):
+        linked_person = Person.objects.create(first_name="Luis", last_name="Vinculado")
+        linked_resident = Resident.objects.create(person=linked_person)
+        resident = Resident.objects.create(person=self.user.person)
+        unit = Unit.objects.create(code="ME-001", unit_type=Unit.Type.APARTMENT)
+        ResidentUnit.objects.create(
+            resident=resident,
+            unit=unit,
+            relation_type=ResidentUnit.Relation.OWNER,
+            is_primary=True,
+        )
+        ResidentUnit.objects.create(
+            resident=linked_resident,
+            unit=unit,
+            relation_type=ResidentUnit.Relation.FAMILY,
+        )
+        self.client.force_authenticate(self.user)
+
+        response = self.client.get("/api/v1/auth/me/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["resident_units"][0]["unit_code"], "ME-001")
+        self.assertEqual(response.data["resident_units"][0]["is_primary"], True)
+        self.assertEqual(response.data["linked_residents"][0]["full_name"], "Luis Vinculado")
 
     def test_web_login_uses_httponly_cookies_and_no_tokens_in_body(self):
         response = self.client.post(
