@@ -51,6 +51,31 @@ SECOND=$(cat /opt/taji/current/.release-sha)
 [[ $(systemctl show taji --property=InvocationID --value) != "$INVOCATION" ]]
 systemctl is-active --quiet taji
 
+# A failed HTTPS verification after switching current must stop the service,
+# and retrying the same SHA must actually recover instead of returning a no-op.
+cat >"$WORK/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ ${TAJI_CI_HTTP_FAILURE:-} == 1 ]]; then exit 22; fi
+exec /usr/bin/curl "$@"
+CURL
+chmod 0755 "$WORK/bin/curl"
+printf 'CI health recovery\n' >>"$WORK/source/deploy-ci-marker.txt"
+git -C "$WORK/source" add deploy-ci-marker.txt
+git -C "$WORK/source" commit -m 'Exercise HTTPS failure and same-commit recovery'
+set +e
+TAJI_CI_HTTP_FAILURE=1 taji-deploy update
+HTTP_FAILED_STATUS=$?
+set -e
+[[ $HTTP_FAILED_STATUS != 0 ]]
+if systemctl is-active --quiet taji; then
+  echo 'ERROR: la API continuó activa después de fallar HTTPS.' >&2
+  exit 1
+fi
+RECOVERY_SHA=$(cat /opt/taji/current/.release-sha)
+taji-deploy update
+[[ $(cat /opt/taji/current/.release-sha) == "$RECOVERY_SHA" ]]
+systemctl is-active --quiet taji
+
 cat >"$WORK/source/condominiums/migrations/0006_ci_intentional_failure.py" <<'MIGRATION'
 from django.db import migrations
 
@@ -70,7 +95,7 @@ if systemctl is-active --quiet taji; then
   echo 'ERROR: la API continuó activa después de una migración fallida.' >&2
   exit 1
 fi
-[[ $(cat /opt/taji/current/.release-sha) == "$SECOND" ]]
+[[ $(cat /opt/taji/current/.release-sha) == "$RECOVERY_SHA" ]]
 BACKUP_COUNT=$(find /var/backups/taji -maxdepth 1 -name '*.dump' | wc -l)
 [[ $BACKUP_COUNT -ge 3 ]]
-echo 'VPS smoke OK: instalación, HTTPS, actualización, no-op y parada segura.'
+echo 'VPS smoke OK: instalación, HTTPS, actualización, no-op, recuperación y parada segura.'

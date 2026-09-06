@@ -128,6 +128,12 @@ SERVICE
   systemctl daemon-reload
 fi
 [[ -f $ENV_FILE && -d $ROOT/repository.git ]] || fail 'Ejecutar install primero.'
+DOMAIN=$(sed -n 's/^ALLOWED_HOSTS=//p' "$ENV_FILE")
+[[ $DOMAIN =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $DOMAIN == *.* ]] || fail 'ALLOWED_HOSTS debe contener el único dominio de esta instalación.'
+check_health() {
+  curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
+    --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/v1/health/"
+}
 # Fixed local database is intentionally used for peer-authenticated backups.
 # Refuse a changed DB target rather than backing up the wrong database.
 [[ $(sed -n 's/^DATABASE_URL=//p' "$ENV_FILE") =~ ^postgresql://taji:[a-f0-9]+@127\.0\.0\.1:5432/taji$ ]] || fail 'Conexión personalizada: adaptar respaldo antes de continuar.'
@@ -135,7 +141,10 @@ git --git-dir="$ROOT/repository.git" fetch origin refs/heads/main:refs/remotes/o
 SHA=$(git --git-dir="$ROOT/repository.git" rev-parse refs/remotes/origin/main)
 OLD_SHA=$(cat "$ROOT/current/.release-sha" 2>/dev/null || true)
 if [[ $SHA == "$OLD_SHA" && $MODE == update ]]; then
-  echo "Sin cambios: $SHA"; exit 0
+  if systemctl is-active --quiet taji && check_health; then
+    echo "Sin cambios: $SHA"; exit 0
+  fi
+  echo 'La versión coincide pero el servicio no está sano; se reintentará el despliegue.'
 fi
 if [[ -n $OLD_SHA ]]; then
   git --git-dir="$ROOT/repository.git" merge-base --is-ancestor "$OLD_SHA" "$SHA" || fail 'main fue reescrito; revisar antes de desplegar.'
@@ -185,10 +194,10 @@ nginx -t
 systemctl enable taji
 systemctl restart taji
 systemctl reload nginx
-DOMAIN=$(sed -n 's/^ALLOWED_HOSTS=//p' "$ENV_FILE")
 healthy=0
 for attempt in {1..20}; do
-  if curl --fail --silent --show-error --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/v1/health/"; then healthy=1; break; fi
+  if check_health; then healthy=1; break; fi
+  echo "Esperando respuesta HTTPS de la API ($attempt/20)."
   sleep 1
 done
 [[ $healthy == 1 ]] || fail 'Falló comprobación HTTPS del servicio.'

@@ -20,7 +20,7 @@ La organización actual por CU y los detalles de integración están en
 backend en un VPS con PostgreSQL, Nginx y HTTPS, consulta
 [Despliegue](deploy/README.md).
 
-Plataforma backend desarrollada con **Django 5**, **Django REST Framework (DRF)** y **PostgreSQL / SQLite**. Ofrece autenticación basada en **JWT (SimpleJWT)** con RBAC (Control de Acceso Basado en Roles), 7 roles, 32 permisos y un modelo de dominio estructurado en 47 tablas.
+Plataforma backend desarrollada con **Django 5**, **Django REST Framework (DRF)** y **PostgreSQL**. Ofrece autenticación basada en **JWT (SimpleJWT)** con RBAC (Control de Acceso Basado en Roles), 7 roles, 33 permisos y un modelo de dominio organizado en cinco paquetes.
 
 ---
 

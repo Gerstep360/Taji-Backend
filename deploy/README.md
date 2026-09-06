@@ -54,7 +54,9 @@ curl --fail https://api.ejemplo.com/api/v1/health/
 sudo taji-deploy update
 ```
 
-Si `main` no cambió, termina sin reinstalar ni reiniciar. Si hay commits nuevos:
+Si `main` no cambió y la API está sana, termina sin reinstalar ni reiniciar.
+Si un intento previo falló, reintenta incluso cuando el commit coincide.
+Si hay commits nuevos:
 
 1. Prepara otra versión en `/opt/taji/releases/`, con su propio venv.
 2. Instala dependencias, comprueba producción, modelos/migraciones y estáticos.
@@ -135,7 +137,8 @@ El workflow `Backend checks` comprueba la suite con PostgreSQL, los ajustes de
 producción y ShellCheck. El job del VPS ejecuta una instalación real en Ubuntu,
 Nginx, Gunicorn y PostgreSQL; sustituye únicamente la emisión pública de Let's
 Encrypt por un certificado local de prueba. Comprueba instalación, actualización,
-ausencia de reinicio sin cambios y parada segura ante una migración fallida.
+ausencia de reinicio sin cambios, recuperación de un fallo de salud del mismo
+commit y parada segura ante una migración fallida.
 Esa prueba no valida tu DNS, firewall, certificado público ni credenciales SMTP.
 
 Referencias: [Django deployment checklist](https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/)
