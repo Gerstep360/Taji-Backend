@@ -92,18 +92,26 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+from urllib.parse import urlparse
+
+def _clean_cors_origin(url_str):
+    parsed = urlparse(url_str.strip())
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return url_str.strip()
+
 FRONTEND_URLS = env.list(
     "FRONTEND_URLS",
     default=["http://localhost:4200", "http://127.0.0.1:4200"],
 )
-CORS_ALLOWED_ORIGINS = FRONTEND_URLS
+CORS_ALLOWED_ORIGINS = [_clean_cors_origin(url) for url in FRONTEND_URLS if url]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = (
     [r"^http://(?:localhost|127\.0\.0\.1|(?:\d{1,3}\.){3}\d{1,3}):4200$"]
     if DEBUG
     else []
 )
-CSRF_TRUSTED_ORIGINS = FRONTEND_URLS
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["accounts.authentication.CookieJWTAuthentication"],

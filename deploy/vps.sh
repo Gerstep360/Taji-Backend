@@ -201,6 +201,7 @@ if [[ $MODE == "install" ]]; then
     if [[ ! -f $ENV_FILE ]]; then
         DB_PASSWORD=$(openssl rand -hex 32)
         SECRET=$(openssl rand -hex 48)
+        FRONTEND_ORIGIN=$(echo "$FRONTEND" | sed -E 's|(https?://[^/]+).*|\1|')
         runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<SQL >/dev/null 2>&1 || true
 CREATE ROLE taji LOGIN PASSWORD '$DB_PASSWORD';
 CREATE DATABASE taji OWNER taji;
@@ -211,14 +212,14 @@ DEBUG=False
 DJANGO_SECRET_KEY=$SECRET
 DATABASE_URL=postgresql://taji:$DB_PASSWORD@127.0.0.1:5432/taji
 ALLOWED_HOSTS=$DOMAIN,localhost,127.0.0.1
-FRONTEND_URLS=$FRONTEND
+FRONTEND_URLS=$FRONTEND_ORIGIN,http://localhost:4200,http://127.0.0.1:4200
 PASSWORD_RESET_URL=$FRONTEND/restablecer-contrasena
 COOKIE_SECURE=False
 MEDIA_ROOT=/var/lib/taji/media
 CACHE_DIR=/var/cache/taji
 ENV
         chown root:taji "$ENV_FILE"; chmod 0640 "$ENV_FILE"
-        unset DB_PASSWORD SECRET
+        unset DB_PASSWORD SECRET FRONTEND_ORIGIN
     fi
 
     if [[ ! -d $ROOT/repository.git ]]; then
