@@ -227,6 +227,8 @@ ENV
         animated_progress_bar $! "Clonando repositorio bare Git Backend"
     fi
 
+    rm -f /etc/nginx/sites-enabled/default
+
     cat >/etc/nginx/sites-available/taji-backend <<NGINX
 server {
     listen 80;
@@ -254,7 +256,12 @@ server {
 }
 NGINX
 
-    ln -sf /etc/nginx/sites-available/taji-backend /etc/nginx/sites-enabled/taji-backend
+    if [[ -f /etc/nginx/sites-available/taji-web ]]; then
+        ln -sf /etc/nginx/sites-available/taji-web /etc/nginx/sites-enabled/taji-web
+        rm -f /etc/nginx/sites-enabled/taji-backend
+    else
+        ln -sf /etc/nginx/sites-available/taji-backend /etc/nginx/sites-enabled/taji-backend
+    fi
     nginx -t >/dev/null 2>&1 && systemctl reload nginx
 
     cat >/etc/systemd/system/taji.service <<'SERVICE'
