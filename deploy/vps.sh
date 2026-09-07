@@ -293,8 +293,9 @@ do_deploy_backend() {
     [[ -f $ENV_FILE && -d $ROOT/repository.git ]] || fail 'Ejecutar opcion [1] install primero.'
 
     # Proceso de Despliegue / Actualizacion Zero-Downtime
-    (git --git-dir="$ROOT/repository.git" fetch origin refs/heads/main:refs/remotes/origin/main >/dev/null 2>&1) &
-    SHA=$(git --git-dir="$ROOT/repository.git" rev-parse refs/remotes/origin/main)
+    (git --git-dir="$ROOT/repository.git" fetch origin main >/dev/null 2>&1) &
+    animated_progress_bar $! "Sincronizando servidor bare Git Backend (fetch origin main)"
+    SHA=$(git --git-dir="$ROOT/repository.git" rev-parse FETCH_HEAD)
 
     RELEASE=$(mktemp -d "$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-${SHA:0:12}-XXXXXX")
     chmod 0755 "$RELEASE"
