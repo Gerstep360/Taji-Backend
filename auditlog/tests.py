@@ -199,3 +199,28 @@ class AutomaticAuditLoggingTests(TestCase):
         self.assertEqual(event.actor_user, self.admin)
         self.assertEqual(event.resource_id, str(resident_user.id))
         self.assertIn("aprobada", event.description)
+
+    def test_audit_api_endpoint_list_and_permissions(self):
+        """Verifica que el endpoint GET /api/v1/audit/ responda solo a Administradores."""
+        # 1. No autenticado -> 401
+        res_unauth = self.client.get("/api/v1/audit/")
+        self.assertEqual(res_unauth.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # 2. Usuario regular sin permiso -> 403
+        reg_role, _ = Role.objects.get_or_create(slug="residente_reg", defaults={"name": "Residente Regular"})
+        reg_user = User.objects.create_user(
+            email="regular@taji.test",
+            password="Password123!",
+            role=reg_role,
+        )
+        self.client.force_authenticate(user=reg_user)
+        res_forbidden = self.client.get("/api/v1/audit/")
+        self.assertEqual(res_forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 3. Administrador autenticado -> 200 con paginación
+        self.client.force_authenticate(user=self.admin)
+        res_admin = self.client.get("/api/v1/audit/")
+        self.assertEqual(res_admin.status_code, status.HTTP_200_OK)
+        self.assertIn("results", res_admin.data)
+        self.assertIn("pagination", res_admin.data)
+
