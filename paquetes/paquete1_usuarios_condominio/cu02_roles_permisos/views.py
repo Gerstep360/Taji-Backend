@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from accounts.api_serializers import ErrorResponseSerializer
 from accounts.models import Role, SystemPermission, User
 from accounts.serializers import UserSerializer
+from auditlog.services import record_audit_event
 
 from .permissions import CanManageRoles
 from .serializers import (
@@ -105,6 +106,15 @@ class RolePermissionsView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         updated_role = serializer.save()
         updated_role.refresh_from_db()
+        record_audit_event(
+            action_code="roles.permissions.updated",
+            resource_type="Role",
+            resource_id=updated_role.id,
+            description=f"Actualización de permisos del rol '{updated_role.name}'.",
+            actor_user=request.user,
+            after_data={"permissions": serializer.validated_data.get("permissions")},
+            request=request,
+        )
         return Response(RoleDetailSerializer(updated_role).data)
 
 
@@ -131,6 +141,15 @@ class InternalUserCreateView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.create(serializer.validated_data)
+        record_audit_event(
+            action_code="users.internal.created",
+            resource_type="User",
+            resource_id=user.id,
+            description=f"Creación de usuario interno '{user.email}' con rol '{user.role.name if user.role else 'Sin rol'}'.",
+            actor_user=request.user,
+            after_data={"email": user.email, "role": user.role.slug if user.role else None},
+            request=request,
+        )
         return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
@@ -193,4 +212,14 @@ class ResidentReviewView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data, context={"user": user, "request": request})
         serializer.is_valid(raise_exception=True)
         updated = serializer.save()
+        status_label = "aprobada" if updated.is_approved else "rechazada"
+        record_audit_event(
+            action_code="residents.approval.reviewed",
+            resource_type="User",
+            resource_id=updated.id,
+            description=f"Solicitud del residente '{updated.email}' fue {status_label}.",
+            actor_user=request.user,
+            after_data={"is_approved": updated.is_approved},
+            request=request,
+        )
         return Response(PendingResidentSerializer(updated).data)

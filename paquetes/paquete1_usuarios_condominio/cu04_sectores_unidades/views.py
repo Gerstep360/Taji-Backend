@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from condominiums.models import Sector, Unit
+from auditlog.services import record_audit_event
 from paquetes.paquete1_usuarios_condominio.cu04_sectores_unidades.permissions import CanManageUnits
 from paquetes.paquete1_usuarios_condominio.cu04_sectores_unidades.serializers import SectorSerializer
 from paquetes.paquete1_usuarios_condominio.cu04_sectores_unidades.serializers import UnitSerializer
@@ -50,6 +51,43 @@ class SectorViewSet(viewsets.ModelViewSet):
     @staticmethod
     def _choices(choices):
         return [{"value": value, "label": label} for value, label in choices]
+
+    def perform_create(self, serializer):
+        sector = serializer.save()
+        record_audit_event(
+            action_code="condominium.sector.created",
+            resource_type="Sector",
+            resource_id=sector.id,
+            description=f"Sector registrado: {sector.name} ({sector.code}).",
+            actor_user=self.request.user,
+            after_data={"code": sector.code, "name": sector.name, "sector_type": sector.sector_type},
+            request=self.request,
+        )
+
+    def perform_update(self, serializer):
+        sector = serializer.save()
+        record_audit_event(
+            action_code="condominium.sector.updated",
+            resource_type="Sector",
+            resource_id=sector.id,
+            description=f"Sector actualizado: {sector.name} ({sector.code}).",
+            actor_user=self.request.user,
+            after_data={"code": sector.code, "name": sector.name, "sector_type": sector.sector_type},
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        code = instance.code
+        name = instance.name
+        record_audit_event(
+            action_code="condominium.sector.deleted",
+            resource_type="Sector",
+            resource_id=instance.id,
+            description=f"Sector eliminado: {name} ({code}).",
+            actor_user=self.request.user,
+            request=self.request,
+        )
+        super().perform_destroy(instance)
 
 
 @extend_schema_view(
@@ -98,3 +136,39 @@ class UnitViewSet(viewsets.ModelViewSet):
     @staticmethod
     def _choices(choices):
         return [{"value": value, "label": label} for value, label in choices]
+
+    def perform_create(self, serializer):
+        unit = serializer.save()
+        record_audit_event(
+            action_code="condominium.unit.created",
+            resource_type="Unit",
+            resource_id=unit.id,
+            description=f"Unidad registrada: {unit.code}.",
+            actor_user=self.request.user,
+            after_data={"code": unit.code, "unit_type": unit.unit_type, "status": unit.status},
+            request=self.request,
+        )
+
+    def perform_update(self, serializer):
+        unit = serializer.save()
+        record_audit_event(
+            action_code="condominium.unit.updated",
+            resource_type="Unit",
+            resource_id=unit.id,
+            description=f"Unidad actualizada: {unit.code}.",
+            actor_user=self.request.user,
+            after_data={"code": unit.code, "unit_type": unit.unit_type, "status": unit.status},
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        code = instance.code
+        record_audit_event(
+            action_code="condominium.unit.deleted",
+            resource_type="Unit",
+            resource_id=instance.id,
+            description=f"Unidad eliminada: {code}.",
+            actor_user=self.request.user,
+            request=self.request,
+        )
+        super().perform_destroy(instance)

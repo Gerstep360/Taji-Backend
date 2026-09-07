@@ -3,7 +3,23 @@ from django.db import models
 from django.utils import timezone
 
 
+class AuditEventQuerySet(models.QuerySet):
+    """Protege los registros contra operaciones masivas de modificación y eliminación."""
+
+    def update(self, **kwargs):
+        raise ValidationError("AuditEvent es append-only y no permite modificaciones masivas.")
+
+    def delete(self):
+        raise ValidationError("AuditEvent es append-only y no permite eliminaciones masivas.")
+
+
+class AuditEventManager(models.Manager.from_queryset(AuditEventQuerySet)):
+    pass
+
+
 class AuditEvent(models.Model):
+    objects = AuditEventManager()
+
     actor_user = models.ForeignKey(
         "accounts.User", on_delete=models.SET_NULL, related_name="audit_events", null=True, blank=True
     )

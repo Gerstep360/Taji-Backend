@@ -4,9 +4,9 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
 from rest_framework import filters, viewsets
 from rest_framework.permissions import IsAuthenticated
-from condominiums.models import Resident
-from paquetes.paquete1_usuarios_condominio.cu05_residentes.permissions import CanManageResidents
 from condominiums.models import Resident, ResidentUnit
+from auditlog.services import record_audit_event
+from paquetes.paquete1_usuarios_condominio.cu05_residentes.permissions import CanManageResidents
 from paquetes.paquete1_usuarios_condominio.cu06_asociar_residentes_unidades.serializers import ResidentDirectorySerializer
 from paquetes.paquete1_usuarios_condominio.cu06_asociar_residentes_unidades.serializers import ResidentUnitSerializer
 
@@ -57,3 +57,40 @@ class ResidentUnitViewSet(viewsets.ModelViewSet):
         elif active == "false":
             queryset = queryset.filter(end_date__isnull=False)
         return queryset
+
+    def perform_create(self, serializer):
+        ru = serializer.save()
+        record_audit_event(
+            action_code="condominium.resident_unit.assigned",
+            resource_type="ResidentUnit",
+            resource_id=ru.id,
+            description=f"Asociación de residente {ru.resident.person.full_name} a unidad {ru.unit.code} ({ru.relation_type}).",
+            actor_user=self.request.user,
+            after_data={"resident_id": ru.resident_id, "unit_id": ru.unit_id, "relation_type": ru.relation_type},
+            request=self.request,
+        )
+
+    def perform_update(self, serializer):
+        ru = serializer.save()
+        record_audit_event(
+            action_code="condominium.resident_unit.updated",
+            resource_type="ResidentUnit",
+            resource_id=ru.id,
+            description=f"Actualización de asociación residente {ru.resident.person.full_name} y unidad {ru.unit.code}.",
+            actor_user=self.request.user,
+            after_data={"resident_id": ru.resident_id, "unit_id": ru.unit_id, "relation_type": ru.relation_type, "end_date": str(ru.end_date) if ru.end_date else None},
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        r_name = instance.resident.person.full_name if instance.resident and instance.resident.person else ""
+        u_code = instance.unit.code if instance.unit else ""
+        record_audit_event(
+            action_code="condominium.resident_unit.unassigned",
+            resource_type="ResidentUnit",
+            resource_id=instance.id,
+            description=f"Desvinculación de residente {r_name} de unidad {u_code}.",
+            actor_user=self.request.user,
+            request=self.request,
+        )
+        super().perform_destroy(instance)

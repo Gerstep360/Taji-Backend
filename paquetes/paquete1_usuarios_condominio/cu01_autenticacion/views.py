@@ -27,6 +27,7 @@ from accounts.api_serializers import (
 )
 from accounts.cookies import clear_auth_cookies, set_auth_cookies
 from accounts.models import LoginAttempt, User
+from auditlog.services import record_audit_event
 from condominiums.models import ResidentUnit
 from accounts.serializers import (
     ForgotPasswordSerializer,
@@ -82,6 +83,14 @@ class RegisterView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        record_audit_event(
+            action_code="auth.register",
+            resource_type="User",
+            resource_id=user.id,
+            description=f"Registro de nuevo usuario '{user.email}' (pendiente de aprobación).",
+            actor_user=user,
+            request=request,
+        )
         return Response(
             {"message": "Tu cuenta fue creada y está pendiente de aprobación por un Administrador.", "user": UserSerializer(user).data},
             status=status.HTTP_201_CREATED,
@@ -149,6 +158,14 @@ class LoginView(generics.GenericAPIView):
                 ip_address=request.META.get("REMOTE_ADDR"),
             )
             if failures_count >= LOGIN_MAX_FAILURES:
+                record_audit_event(
+                    action_code="auth.account.locked",
+                    resource_type="User",
+                    resource_id=known_user.id if known_user else None,
+                    description=f"Cuenta temporalmente bloqueada por superar {LOGIN_MAX_FAILURES} intentos fallidos con email '{email}'.",
+                    actor_user=known_user,
+                    request=request,
+                )
                 return Response(
                     {
                         "detail": "Has superado los 5 intentos. Espera 30 minutos antes de volver a intentar.",
@@ -160,6 +177,14 @@ class LoginView(generics.GenericAPIView):
                     status=status.HTTP_429_TOO_MANY_REQUESTS,
                     headers={"Retry-After": str(LOGIN_LOCKOUT_MINUTES * 60)},
                 )
+            record_audit_event(
+                action_code="auth.login.failed",
+                resource_type="User",
+                resource_id=known_user.id if known_user else None,
+                description=f"Intento fallido de inicio de sesión con email '{email}'.",
+                actor_user=known_user,
+                request=request,
+            )
             if known_user is None or not known_user.is_active:
                 detail = "Usuario no encontrado o no registrado. Regístrate para continuar."
             else:
@@ -181,6 +206,14 @@ class LoginView(generics.GenericAPIView):
             email=email,
             ip_address=request.META.get("REMOTE_ADDR"),
             was_successful=True,
+        )
+        record_audit_event(
+            action_code="auth.login.success",
+            resource_type="User",
+            resource_id=user.id,
+            description=f"Inicio de sesión exitoso desde cliente '{serializer.validated_data['client']}'.",
+            actor_user=user,
+            request=request,
         )
         tokens = token_pair_for_user(user)
         payload = {"message": "Sesión iniciada.", "user": UserSerializer(user).data}
@@ -272,6 +305,15 @@ class LogoutView(generics.GenericAPIView):
                 RefreshToken(raw_refresh).blacklist()
             except TokenError:
                 pass
+        actor = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+        record_audit_event(
+            action_code="auth.logout",
+            resource_type="User",
+            resource_id=actor.id if actor else None,
+            description="Cierre de sesión.",
+            actor_user=actor,
+            request=request,
+        )
         return clear_auth_cookies(Response(status=status.HTTP_204_NO_CONTENT))
 
 
@@ -363,6 +405,14 @@ class ForgotPasswordView(generics.GenericAPIView):
                 recipient_list=[email],
                 fail_silently=False,
             )
+            record_audit_event(
+                action_code="auth.password.reset_requested",
+                resource_type="User",
+                resource_id=user.id,
+                description=f"Solicitud de recuperación de contraseña para '{user.email}'.",
+                actor_user=user,
+                request=request,
+            )
 
         return Response({"message": GENERIC_RESET_MESSAGE})
 
@@ -406,5 +456,14 @@ class ResetPasswordView(generics.GenericAPIView):
 
         for outstanding in OutstandingToken.objects.filter(user=user):
             BlacklistedToken.objects.get_or_create(token=outstanding)
+
+        record_audit_event(
+            action_code="auth.password.reset_completed",
+            resource_type="User",
+            resource_id=user.id,
+            description=f"Restablecimiento de contraseña completado para '{user.email}'.",
+            actor_user=user,
+            request=request,
+        )
 
         return Response({"message": "Tu contraseña fue actualizada. Ya puedes iniciar sesión."})

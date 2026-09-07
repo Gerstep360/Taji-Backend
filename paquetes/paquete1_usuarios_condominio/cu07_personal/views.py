@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from accounts.models import Person
+from auditlog.services import record_audit_event
 from condominiums.models import Staff
 from paquetes.paquete1_usuarios_condominio.cu07_personal.permissions import CanManageStaff
 from paquetes.paquete1_usuarios_condominio.cu07_personal.serializers import StaffSerializer
@@ -91,3 +92,41 @@ class StaffViewSet(viewsets.ModelViewSet):
     @staticmethod
     def _choices(choices):
         return [{"value": value, "label": label} for value, label in choices]
+
+    def perform_create(self, serializer):
+        staff = serializer.save()
+        record_audit_event(
+            action_code="staff.created",
+            resource_type="Staff",
+            resource_id=staff.id,
+            description=f"Personal registrado: {staff.person.full_name} ({staff.employee_code}).",
+            actor_user=self.request.user,
+            after_data={"employee_code": staff.employee_code, "staff_type": staff.staff_type, "status": staff.status},
+            request=self.request,
+        )
+
+    def perform_update(self, serializer):
+        staff = serializer.save()
+        record_audit_event(
+            action_code="staff.updated",
+            resource_type="Staff",
+            resource_id=staff.id,
+            description=f"Personal actualizado: {staff.person.full_name} ({staff.employee_code}).",
+            actor_user=self.request.user,
+            after_data={"employee_code": staff.employee_code, "staff_type": staff.staff_type, "status": staff.status},
+            request=self.request,
+        )
+
+    def perform_destroy(self, instance):
+        emp_code = instance.employee_code
+        name = instance.person.full_name if instance.person else ""
+        record_audit_event(
+            action_code="staff.deleted",
+            resource_type="Staff",
+            resource_id=instance.id,
+            description=f"Vínculo de personal eliminado: {name} ({emp_code}).",
+            actor_user=self.request.user,
+            request=self.request,
+        )
+        super().perform_destroy(instance)
+
