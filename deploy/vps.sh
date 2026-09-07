@@ -225,6 +225,68 @@ PYTHON
 )
 }
 
+do_change_password() {
+    [[ -d $ROOT/current ]] || fail "No existe /opt/taji/current. Ejecuta la opcion [1] primero."
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|                 CAMBIO RAPIDO DE CONTRASEÑA DE USUARIO                 |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+
+    local TARGET_EMAIL="${1:-}"
+    local NEW_PASS="${2:-}"
+
+    if [[ -z "$TARGET_EMAIL" ]]; then
+        read -p " Correo del usuario a cambiar contraseña [admin@gmail.com]: " TARGET_EMAIL
+        TARGET_EMAIL=${TARGET_EMAIL:-"admin@gmail.com"}
+    fi
+
+    if [[ -z "$NEW_PASS" ]]; then
+        read -p " Nueva contraseña [Admin12345!]: " NEW_PASS
+        NEW_PASS=${NEW_PASS:-"Admin12345!"}
+    fi
+
+    echo -e "\n${YELLOW}Procesando cambio de contraseña para: ${BRIGHT_WHITE}${TARGET_EMAIL}${RESET}..."
+
+    (cd "$ROOT/current" && runuser -u taji -- "$ROOT/current/.venv/bin/python" manage.py shell --settings=config.settings_production <<PYTHON
+import sys
+from accounts.models import User, LoginAttempt
+
+email = "${TARGET_EMAIL}".strip().lower()
+password = "${NEW_PASS}"
+
+user = User.objects.filter(email=email).first()
+if not user:
+    user = User.objects.filter(email__iexact=email).first()
+
+if user:
+    user.set_password(password)
+    user.is_active = True
+    user.is_approved = True
+    user.save()
+
+    try:
+        deleted_count, _ = LoginAttempt.objects.filter(user=user, was_successful=False).delete()
+        unlock_msg = f" y se limpiaron {deleted_count} intentos fallidos acumulados" if deleted_count > 0 else ""
+    except Exception:
+        unlock_msg = ""
+
+    print(f"\n >>> [OK] Contraseña cambiada exitosamente para '{user.email}'{unlock_msg}.")
+    print(f" >>> [OK] Nueva contraseña configurada: {password}")
+    print(f" >>> [OK] Estado de la cuenta: Activo=SI, Aprobado=SI")
+else:
+    print(f"\n >>> [ERROR] No se encontro ningun usuario con el correo '{email}'.")
+    print("\n --- Usuarios disponibles en el sistema ---")
+    users = User.objects.all().order_by('email')
+    if users.exists():
+        for u in users:
+            print(f"  * {u.email} ({u.full_name or 'Sin nombre'})")
+    else:
+        print("  (No hay usuarios registrados. Usa la opcion [4] para crear el primero).")
+PYTHON
+)
+    echo -e "\n${BRIGHT_GREEN}[OK] Operacion finalizada con exito.${RESET}"
+}
+
 do_deploy_backend() {
     do_update_git
 
@@ -302,6 +364,11 @@ run_action() {
 
     if [[ $MODE == "users" || $MODE == "listusers" ]]; then
         do_list_users
+        return 0
+    fi
+
+    if [[ $MODE == "password" || $MODE == "changepassword" || $MODE == "passwd" ]]; then
+        do_change_password "${2:-}" "${3:-}"
         return 0
     fi
 
@@ -518,25 +585,27 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[3] ${RESET} ${WHITE}[#] Sincronizar Cambios de Git (git pull origin main)${RESET}           |"
     echo -e "|  ${BRIGHT_CYAN}[4] ${RESET} ${WHITE}[@] Crear / Actualizar Superusuario (Admin)${RESET}                      |"
     echo -e "|  ${BRIGHT_CYAN}[5] ${RESET} ${WHITE}[=] Listar Cuentas de Usuarios Registrados${RESET}                       |"
-    echo -e "|  ${BRIGHT_CYAN}[6] ${RESET} ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[7] ${RESET} ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                  |"
-    echo -e "|  ${BRIGHT_CYAN}[8] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
-    echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
-    echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
+    echo -e "|  ${BRIGHT_CYAN}[6] ${RESET} ${WHITE}[*] Cambiar Contraseña de Usuario${RESET}                                |"
+    echo -e "|  ${BRIGHT_CYAN}[7] ${RESET} ${WHITE}[$] Respaldo de Base de Datos PostgreSQL (.dump)${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[8] ${RESET} ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
+    echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
+    echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-10]: " CHOICE
+    read -p " Selecciona una opcion [1-11]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
         3) run_action "gitpull" || true ;;
         4) run_action "superuser" || true ;;
         5) run_action "users" || true ;;
-        6) run_action "backup" || true ;;
-        7) run_action "health" || true ;;
-        8) run_action "restart" || true ;;
-        9) run_action "logs" || true ;;
-        10) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        6) run_action "password" || true ;;
+        7) run_action "backup" || true ;;
+        8) run_action "health" || true ;;
+        9) run_action "restart" || true ;;
+        10) run_action "logs" || true ;;
+        11) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 

@@ -33,12 +33,29 @@ La configuración actual del respaldo admite la base local que crea el
 instalador; una base remota o credenciales personalizadas requieren adaptar
 la comprobación y el respaldo antes de continuar.
 
-Los roles/permisos se inicializan una sola vez. Crea tu administrador:
+Los roles/permisos se inicializan una sola vez.
 
-```bash
-cd /opt/taji/current
-sudo -u taji .venv/bin/python manage.py createsuperuser --settings=config.settings_production
-```
+### Administración de cuentas y contraseñas
+
+Desde el menú interactivo (`sudo bash deploy/vps.sh`) o directamente desde la consola:
+
+- **Cambiar contraseña de cualquier usuario (Opción [6]):**
+  ```bash
+  sudo bash deploy/vps.sh password
+  # O especificando correo y contraseña directamente:
+  sudo bash deploy/vps.sh password admin@gmail.com Admin12345!
+  ```
+  *Actualiza la contraseña, asegura que la cuenta esté activa/aprobada y desbloquea intentos fallidos acumulados.*
+
+- **Crear / Actualizar Superusuario (Admin) (Opción [4]):**
+  ```bash
+  sudo bash deploy/vps.sh superuser
+  ```
+
+- **Listar cuentas de usuarios registrados (Opción [5]):**
+  ```bash
+  sudo bash deploy/vps.sh users
+  ```
 
 Swagger queda en `https://api.ejemplo.com/api/v1/docs/`. Comprueba el servicio:
 
