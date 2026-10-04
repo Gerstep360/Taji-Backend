@@ -1,0 +1,1 @@
+"""CU09: Generar y consultar el QR temporal de una visita (RF-09 / T021)."""

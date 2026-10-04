@@ -147,6 +147,17 @@ AUTH_COOKIE_SECURE = env.bool("COOKIE_SECURE", default=not DEBUG)
 AUTH_COOKIE_SAMESITE = env("COOKIE_SAMESITE", default="Lax")
 AUTH_COOKIE_DOMAIN = env("COOKIE_DOMAIN", default=None)
 
+# --- RF-09 / T021: QR temporal de visita ---
+# El contenido del QR es un token opaco: en base de datos solo se guarda su hash SHA-256.
+VISIT_QR_TOKEN_BYTES = env.int("VISIT_QR_TOKEN_BYTES", default=24)
+# Vigencia por defecto del QR y techo absoluto para no exceder valid_until.
+VISIT_QR_TTL_MINUTES = env.int("VISIT_QR_TTL_MINUTES", default=240)
+VISIT_QR_MAX_TTL_MINUTES = env.int("VISIT_QR_MAX_TTL_MINUTES", default=1440)
+VISIT_QR_MIN_TTL_MINUTES = env.int("VISIT_QR_MIN_TTL_MINUTES", default=5)
+# Corrección de errores del símbolo QR: "low" | "medium" | "quartile" | "high".
+VISIT_QR_ECC = env("VISIT_QR_ECC", default="medium")
+VISIT_QR_IMAGE_SCALE = env.int("VISIT_QR_IMAGE_SCALE", default=6)
+
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Taji <no-reply@taji.app>")
 EMAIL_HOST = env("EMAIL_HOST", default="localhost")
@@ -183,6 +194,9 @@ SPECTACULAR_SETTINGS = {
         {"name": "Roles y Permisos", "description": "CU02: Gestión de roles, permisos RBAC y aprobación de residentes."},
         {"name": "Residentes", "description": "CU05: CRUD de residentes y copropietarios."},
         {"name": "Personal", "description": "CU07: CRUD y clasificación del personal del condominio."},
+        {"name": "Seguridad - Visitas", "description": "CU08: Registro y autorización anticipada de visitantes."},
+        {"name": "Seguridad - QR de visita", "description": "CU09: Generación y consulta del QR temporal de una visita."},
+        {"name": "Seguridad - Validación QR", "description": "CU10: Validación del QR y autorización de ingreso del visitante."},
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],
 }

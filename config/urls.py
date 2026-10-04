@@ -40,6 +40,8 @@ urlpatterns = [
     path("api/v1/audit/", include("auditlog.urls")),
     path("api/v1/", include("condominiums.urls")),
     path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu08_visitantes.urls")),
+    path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu10_validar_qr.urls")),
+    path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu09_qr_visita.urls")),
     path("api/v1/openapi/", SpectacularAPIView.as_view(), name="openapi-schema"),
     path(
         "api/v1/docs/",
