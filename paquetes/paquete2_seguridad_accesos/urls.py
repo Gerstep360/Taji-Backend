@@ -8,6 +8,8 @@ urlpatterns = [
     # no debe competir con el patrón numérico `visit-qr/<pk>/` del router.
     path("", include("paquetes.paquete2_seguridad_accesos.cu10_validar_qr.urls")),
     path("", include("paquetes.paquete2_seguridad_accesos.cu09_qr_visita.urls")),
+    path("", include("paquetes.paquete2_seguridad_accesos.cu13_turnos_seguridad.urls")),
     path("cu17/", include("paquetes.paquete2_seguridad_accesos.cu17_verificacion_facial.urls")),
+
     path("facial/", include("paquetes.paquete2_seguridad_accesos.cu17_verificacion_facial.urls")),
 ]
