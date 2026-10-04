@@ -63,14 +63,31 @@ TEMPLATES = [
 ]
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Configuración predeterminada a PostgreSQL local 'taji'
-DATABASES = {
-    "default": env.db(
-        "DATABASE_URL",
-        default="postgresql://postgres:root@localhost:5432/taji",
-    )
-}
-DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
+import socket
+
+def _is_postgres_listening(host="127.0.0.1", port=5432):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.05)
+        res = s.connect_ex((host, port))
+        s.close()
+        return res == 0
+    except Exception:
+        return False
+
+_env_db = env.db("DATABASE_URL", default="postgresql://postgres:root@localhost:5432/taji")
+
+if _env_db["ENGINE"] == "django.db.backends.postgresql" and not _is_postgres_listening():
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
+else:
+    DATABASES = {"default": _env_db}
+    if DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":
+        DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
