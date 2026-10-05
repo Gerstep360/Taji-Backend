@@ -96,10 +96,10 @@ fail() {
 [[ $EUID -eq 0 ]] || fail 'Este script debe ejecutarse con sudo.'
 
 check_backend_health() {
-    if curl --fail --silent --connect-timeout 3 "http://127.0.0.1:8000/api/v1/health/" >/dev/null 2>&1; then
+    if curl --fail --silent --connect-timeout 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:8000/api/v1/health/" >/dev/null 2>&1; then
         return 0
     fi
-    if curl --fail --silent --connect-timeout 3 "http://127.0.0.1/taji/api/v1/health/" >/dev/null 2>&1; then
+    if curl --fail --silent --connect-timeout 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1/taji/api/v1/health/" >/dev/null 2>&1; then
         return 0
     fi
     return 1
@@ -494,7 +494,8 @@ DATABASE_URL=postgresql://taji:$DB_PASSWORD@127.0.0.1:5432/taji
 ALLOWED_HOSTS=$DOMAIN,localhost,127.0.0.1
 FRONTEND_URLS=$FRONTEND_ORIGIN,http://localhost:4200,http://127.0.0.1:4200
 PASSWORD_RESET_URL=$FRONTEND/restablecer-contrasena
-COOKIE_SECURE=False
+COOKIE_SECURE=True
+SECURE_SSL_REDIRECT=True
 MEDIA_ROOT=/var/lib/taji/media
 CACHE_DIR=/var/cache/taji
 ENV

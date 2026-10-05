@@ -40,6 +40,8 @@ jobs:
       - run: python manage.py check --deploy --fail-level WARNING --settings=config.settings_production
         env:
           DEBUG: "False"
+          COOKIE_SECURE: "True"
+          SECURE_SSL_REDIRECT: "True"
           ALLOWED_HOSTS: api.taji.test
           FRONTEND_URLS: https://web.taji.test
           CACHE_DIR: /tmp/taji-ci-cache

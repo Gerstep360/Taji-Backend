@@ -22,7 +22,7 @@ class PersonAccessSerializer(serializers.ModelSerializer):
             "phone",
         )
 
-    def get_full_name(self, obj):
+    def get_full_name(self, obj) -> str:
         return obj.full_name if obj else ""
 
 
@@ -39,7 +39,7 @@ class GuardStaffSerializer(serializers.ModelSerializer):
             "full_name",
         )
 
-    def get_full_name(self, obj):
+    def get_full_name(self, obj) -> str:
         return obj.person.full_name if obj and obj.person else ""
 
 

@@ -35,7 +35,11 @@ chmod 0755 "$WORK/bin/certbot"
 export PATH="$WORK/bin:$PATH"
 bash "$WORK/source/deploy/vps.sh" install api.taji.test ci@example.invalid https://web.taji.test
 systemctl is-active --quiet taji
+HTTP_REDIRECT=$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{redirect_url}' \
+  --resolve api.taji.test:80:127.0.0.1 http://api.taji.test/api/v1/health/)
+[[ $HTTP_REDIRECT == '301 https://api.taji.test/api/v1/health/' ]]
 curl --fail --silent --show-error --resolve api.taji.test:443:127.0.0.1 https://api.taji.test/api/v1/health/
+[[ -x /etc/letsencrypt/renewal-hooks/deploy/taji-reload-nginx ]]
 FIRST=$(cat /opt/taji/current/.release-sha)
 INVOCATION=$(systemctl show taji --property=InvocationID --value)
 taji-deploy update
