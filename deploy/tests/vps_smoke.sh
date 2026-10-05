@@ -35,7 +35,7 @@ chmod 0755 "$WORK/bin/certbot"
 export PATH="$WORK/bin:$PATH"
 bash "$WORK/source/deploy/vps.sh" install api.taji.test ci@example.invalid https://web.taji.test
 systemctl is-active --quiet taji
-curl --fail --silent --resolve api.taji.test:443:127.0.0.1 https://api.taji.test/api/v1/health/
+curl --fail --silent --show-error --resolve api.taji.test:443:127.0.0.1 https://api.taji.test/api/v1/health/
 FIRST=$(cat /opt/taji/current/.release-sha)
 INVOCATION=$(systemctl show taji --property=InvocationID --value)
 taji-deploy update

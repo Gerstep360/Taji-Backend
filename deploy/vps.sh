@@ -509,10 +509,48 @@ ENV
 
         rm -f /etc/nginx/sites-enabled/default
 
+        TLS_DIR="/etc/letsencrypt/live/$DOMAIN"
+        if [[ ! -s "$TLS_DIR/fullchain.pem" || ! -s "$TLS_DIR/privkey.pem" ]]; then
+            cat >/etc/nginx/sites-available/taji-backend <<NGINX
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/taji-acme;
+    }
+
+    location / { return 404; }
+}
+NGINX
+            ln -sf /etc/nginx/sites-available/taji-backend /etc/nginx/sites-enabled/taji-backend
+            nginx -t
+            systemctl reload nginx
+            certbot certonly --non-interactive --agree-tos --no-eff-email \
+                --email "$EMAIL" --webroot -w /var/www/taji-acme -d "$DOMAIN"
+        fi
+
+        [[ -s "$TLS_DIR/fullchain.pem" && -s "$TLS_DIR/privkey.pem" ]] || \
+            fail "Certbot no genero un certificado TLS valido para $DOMAIN."
+
         cat >/etc/nginx/sites-available/taji-backend <<NGINX
 server {
     listen 80;
     server_name $DOMAIN;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/taji-acme;
+    }
+
+    location / { return 301 https://\$host\$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name $DOMAIN;
+    ssl_certificate $TLS_DIR/fullchain.pem;
+    ssl_certificate_key $TLS_DIR/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     location /taji/api/ {
         proxy_pass http://127.0.0.1:8000/api/;
@@ -536,13 +574,22 @@ server {
 }
 NGINX
 
+        install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+        cat >/etc/letsencrypt/renewal-hooks/deploy/taji-reload-nginx <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+nginx -t
+systemctl reload nginx
+HOOK
+        chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/taji-reload-nginx
+
         if [[ -f /etc/nginx/sites-available/taji-web ]]; then
             ln -sf /etc/nginx/sites-available/taji-web /etc/nginx/sites-enabled/taji-web
             rm -f /etc/nginx/sites-enabled/taji-backend
         else
             ln -sf /etc/nginx/sites-available/taji-backend /etc/nginx/sites-enabled/taji-backend
         fi
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx
+        nginx -t && systemctl reload nginx
 
         cat >/etc/systemd/system/taji.service <<'SERVICE'
 [Unit]
