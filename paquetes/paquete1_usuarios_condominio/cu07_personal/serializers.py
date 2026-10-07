@@ -1,7 +1,18 @@
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import serializers
-from accounts.models import Person
+from accounts.models import Person, Role, User
 from condominiums.models import Staff
+
+
+STAFF_ROLE_BY_TYPE = {
+    Staff.Type.SECURITY: "seguridad",
+    Staff.Type.CLEANING: "limpieza",
+    Staff.Type.MAINTENANCE: "mantenimiento",
+    Staff.Type.ADMINISTRATION: "directiva",
+    Staff.Type.OTHER: "proveedor-externo",
+}
 
 
 class StaffSerializer(serializers.ModelSerializer):
@@ -44,6 +55,17 @@ class StaffSerializer(serializers.ModelSerializer):
     employee_code = serializers.CharField(read_only=True)
     staff_type_display = serializers.CharField(source="get_staff_type_display", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    has_user_account = serializers.SerializerMethodField()
+    user_email = serializers.SerializerMethodField()
+    create_user_account = serializers.BooleanField(write_only=True, required=False, default=False)
+    account_password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        min_length=10,
+        max_length=128,
+        trim_whitespace=False,
+    )
 
     class Meta:
         model = Staff
@@ -68,6 +90,10 @@ class StaffSerializer(serializers.ModelSerializer):
             "status",
             "status_display",
             "notes",
+            "has_user_account",
+            "user_email",
+            "create_user_account",
+            "account_password",
         )
         extra_kwargs = {
             "hire_date": {"allow_null": True, "required": False},
@@ -111,21 +137,61 @@ class StaffSerializer(serializers.ModelSerializer):
             ]
         if hire_date and end_date and end_date < hire_date:
             errors["end_date"] = ["El fin de trabajo no puede ser anterior al inicio."]
+
+        if attrs.get("create_user_account"):
+            email = person_data.get(
+                "contact_email",
+                self.instance.person.contact_email if self.instance else "",
+            )
+            if not email:
+                errors["contact_email"] = ["Debes indicar un correo para crear la cuenta de acceso."]
+            else:
+                existing_user = User.objects.filter(email__iexact=email)
+                if self.instance:
+                    existing_user = existing_user.exclude(person_id=self.instance.person_id)
+                if existing_user.exists():
+                    errors["contact_email"] = ["Ya existe una cuenta de usuario con este correo."]
+
+            if self.instance and self._person_has_user(self.instance.person):
+                errors["create_user_account"] = ["Esta persona ya tiene una cuenta de acceso."]
+
+            password = attrs.get("account_password") or ""
+            if not password:
+                errors["account_password"] = ["Debes definir una contraseña inicial."]
+            else:
+                try:
+                    validate_password(password)
+                except DjangoValidationError as exc:
+                    errors["account_password"] = list(exc.messages)
+
+            staff_type = attrs.get(
+                "staff_type", self.instance.staff_type if self.instance else None
+            )
+            role_slug = STAFF_ROLE_BY_TYPE.get(staff_type)
+            if not role_slug or not Role.objects.filter(slug=role_slug, is_active=True).exists():
+                errors["staff_type"] = ["No existe un rol activo para el área seleccionada."]
+
         if errors:
             raise serializers.ValidationError(errors)
         return attrs
 
     @transaction.atomic
     def create(self, validated_data):
+        create_user_account = validated_data.pop("create_user_account", False)
+        account_password = validated_data.pop("account_password", "")
         person_data = validated_data.pop("person")
         person = Person.objects.create(**person_data)
         staff = Staff.objects.create(person=person, **validated_data)
         staff.employee_code = self._generated_employee_code(staff.pk)
         staff.save(update_fields=("employee_code",))
+        if create_user_account:
+            self._create_user_account(staff, account_password)
         return staff
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        create_user_account = validated_data.pop("create_user_account", False)
+        account_password = validated_data.pop("account_password", "")
         person_data = validated_data.pop("person", {})
         for field, value in person_data.items():
             setattr(instance.person, field, value)
@@ -135,7 +201,33 @@ class StaffSerializer(serializers.ModelSerializer):
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
+        if create_user_account:
+            self._create_user_account(instance, account_password)
         return instance
+
+    def get_has_user_account(self, obj) -> bool:
+        return self._person_has_user(obj.person)
+
+    def get_user_email(self, obj) -> str:
+        if not self._person_has_user(obj.person):
+            return ""
+        return obj.person.user.email
+
+    @staticmethod
+    def _person_has_user(person) -> bool:
+        return User.objects.filter(person=person).exists()
+
+    @staticmethod
+    def _create_user_account(staff, password) -> User:
+        role_slug = STAFF_ROLE_BY_TYPE[staff.staff_type]
+        role = Role.objects.get(slug=role_slug, is_active=True)
+        return User.objects.create_user(
+            email=staff.person.contact_email,
+            password=password,
+            role=role,
+            person=staff.person,
+            is_approved=True,
+        )
 
     @staticmethod
     def _normalize_person(person_data):
