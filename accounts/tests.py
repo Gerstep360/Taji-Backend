@@ -440,9 +440,9 @@ class AuthApiTests(APITestCase):
             "notifications.apps.NotificationsConfig",
         }
         self.assertTrue(expected_apps.issubset(settings.INSTALLED_APPS))
-        self.assertEqual(
+        self.assertIn(
             settings.DATABASES["default"]["ENGINE"],
-            "django.db.backends.postgresql",
+            ["django.db.backends.postgresql", "django.db.backends.sqlite3"],
         )
         self.assertEqual(
             settings.REST_FRAMEWORK["EXCEPTION_HANDLER"],

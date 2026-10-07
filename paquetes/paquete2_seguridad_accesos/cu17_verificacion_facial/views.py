@@ -16,6 +16,7 @@ from paquetes.paquete2_seguridad_accesos.cu17_verificacion_facial.facial_engine 
     EMBEDDING_DIM,
     DEFAULT_THRESHOLD,
     extract_face_embedding,
+    process_multi_image_enrollment,
     pack_embedding,
     match_face_against_references,
 )
@@ -47,11 +48,21 @@ from paquetes.paquete2_seguridad_accesos.cu17_verificacion_facial.serializers im
     ),
 )
 @method_decorator(never_cache, name="dispatch")
-class BiometricReferenceViewSet(viewsets.ReadOnlyModelViewSet):
+class BiometricReferenceViewSet(viewsets.ModelViewSet):
     """API para la gestión y versionado de referencias biométricas de residentes (CU17 / RF-17)."""
 
     serializer_class = BiometricReferenceSerializer
     permission_classes = [IsAuthenticated, CanManageFaceVerification]
+
+    def perform_destroy(self, instance):
+        resident = instance.resident
+        was_active = instance.is_active
+        instance.delete()
+        if was_active:
+            latest = BiometricReference.objects.filter(resident=resident).order_by("-enrolled_at").first()
+            if latest:
+                latest.is_active = True
+                latest.save(update_fields=["is_active"])
 
     def get_queryset(self):
         queryset = BiometricReference.objects.select_related("resident__person", "enrolled_by_user")
@@ -85,13 +96,29 @@ class BiometricReferenceViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         resident_id = serializer.validated_data["resident_id"]
-        reference_image = serializer.validated_data["reference_image"]
+        reference_image = serializer.validated_data.get("reference_image") or ""
+        images = serializer.validated_data.get("images") or []
 
         resident = Resident.objects.select_related("person").get(id=resident_id)
 
-        # Generar embedding vectorial de 128 características
-        vector = extract_face_embedding(reference_image)
-        packed_bytes = pack_embedding(vector)
+        if images:
+            enroll_res = process_multi_image_enrollment(images)
+            if not enroll_res["success"]:
+                return Response(
+                    {"error": enroll_res["error"], "detail": enroll_res["message"]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            packed_bytes = enroll_res["packed_bytes"]
+            primary_img = images[0]
+        else:
+            extracted = extract_face_embedding(reference_image)
+            if not extracted["success"]:
+                return Response(
+                    {"error": extracted["error"], "detail": extracted["message"]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            packed_bytes = pack_embedding(extracted["embedding"])
+            primary_img = reference_image
 
         with transaction.atomic():
             # Desactivar versión anterior activa del residente para mantener historial de versiones
@@ -99,7 +126,7 @@ class BiometricReferenceViewSet(viewsets.ReadOnlyModelViewSet):
 
             new_ref = BiometricReference.objects.create(
                 resident=resident,
-                reference_image=reference_image,
+                reference_image=primary_img,
                 embedding=packed_bytes,
                 embedding_dim=EMBEDDING_DIM,
                 model_name=MODEL_NAME,
@@ -202,12 +229,30 @@ class FaceVerificationViewSet(viewsets.ReadOnlyModelViewSet):
         matched_resident = match_data["matched_resident"]
         biometric_ref = match_data["biometric_reference"]
 
+        guard_staff = Staff.objects.filter(person__user=request.user).first()
+        verification = FaceVerification.objects.create(
+            captured_image=captured_image,
+            matched_resident=matched_resident,
+            biometric_reference=biometric_ref,
+            guard_staff=guard_staff,
+            similarity_score=match_data["similarity_score"],
+            threshold=threshold,
+            model_name=match_data["model_name"],
+            model_version=match_data["model_version"],
+            result=match_data["result"],
+            human_confirmed=None,
+            confirmed_by_user=request.user,
+        )
+
         response_payload = {
+            "verification_id": verification.id,
             "matched_resident": ResidentSimpleSerializer(matched_resident).data if matched_resident else None,
             "biometric_reference_id": biometric_ref.id if biometric_ref else None,
             "similarity_score": match_data["similarity_score"],
             "threshold": match_data["threshold"],
             "result": match_data["result"],
+            "error_code": match_data.get("error_code"),
+            "message": match_data.get("message"),
             "model_name": match_data["model_name"],
             "model_version": match_data["model_version"],
         }

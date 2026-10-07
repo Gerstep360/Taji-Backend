@@ -50,12 +50,36 @@ class BiometricReferenceSerializer(serializers.ModelSerializer):
 
 class EnrollBiometricReferenceSerializer(serializers.Serializer):
     resident_id = serializers.IntegerField(required=True)
-    reference_image = serializers.CharField(required=True, help_text="Imagen base64 o URL de la foto de referencia")
+    reference_image = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Imagen base64 principal de referencia",
+    )
+    images = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Lista de al menos 5 fotografías faciales base64 para entrenamiento del patrón biométrico",
+    )
 
     def validate_resident_id(self, value):
         if not Resident.objects.filter(id=value).exists():
             raise serializers.ValidationError("El residente especificado no existe.")
         return value
+
+    def validate(self, attrs):
+        images = attrs.get("images") or []
+        ref_img = attrs.get("reference_image")
+
+        if not images and not ref_img:
+            raise serializers.ValidationError(
+                {"images": "Debe proporcionar al menos 5 fotografías faciales para entrenar el modelo biométrico."}
+            )
+
+        if images and len(images) < 5:
+            raise serializers.ValidationError(
+                {"images": f"Se requieren al menos 5 imágenes faciales para realizar el entrenamiento del modelo (recibidas: {len(images)})."}
+            )
+        return attrs
 
 
 class FaceMatchRequestSerializer(serializers.Serializer):
