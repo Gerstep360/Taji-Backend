@@ -5,8 +5,12 @@ from django.db.models import Q
 from django.utils import timezone as dj_timezone
 
 
+from tenancy.managers import TenantAwareManager
+
+
 class Condominium(models.Model):
     name = models.CharField(max_length=150)
+    slug = models.SlugField(max_length=100, unique=True, null=True, blank=True)
     legal_name = models.CharField(max_length=180, blank=True)
     address = models.CharField(max_length=250, blank=True)
     phone = models.CharField(max_length=25, blank=True)
@@ -15,6 +19,9 @@ class Condominium(models.Model):
     logo = models.CharField(max_length=500, blank=True)
     rules_summary = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, default="ACTIVE")
+    max_units = models.PositiveIntegerField(default=500)
+    max_residents = models.PositiveIntegerField(default=1500)
     created_at = models.DateTimeField(default=dj_timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -33,6 +40,8 @@ class Sector(models.Model):
         FLOOR = "FLOOR", "Piso"
         ZONE = "ZONE", "Zona"
         OTHER = "OTHER", "Otro"
+
+    objects = TenantAwareManager()
 
     condominium = models.ForeignKey(Condominium, on_delete=models.CASCADE, related_name="sectors")
     parent = models.ForeignKey(
@@ -69,6 +78,8 @@ class Unit(models.Model):
         INACTIVE = "INACTIVE", "Inactiva"
         MAINTENANCE = "MAINTENANCE", "Mantenimiento"
 
+    objects = TenantAwareManager()
+
     sector = models.ForeignKey(
         Sector, on_delete=models.PROTECT, related_name="units", null=True, blank=True
     )
@@ -97,6 +108,11 @@ class Resident(models.Model):
         INACTIVE = "INACTIVE", "Inactivo"
         BLOCKED = "BLOCKED", "Bloqueado"
 
+    objects = TenantAwareManager()
+
+    condominium = models.ForeignKey(
+        Condominium, on_delete=models.CASCADE, related_name="residents", null=True, blank=True
+    )
     person = models.OneToOneField("accounts.Person", on_delete=models.PROTECT, related_name="resident")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     notes = models.TextField(blank=True)
@@ -117,6 +133,8 @@ class ResidentUnit(models.Model):
         FAMILY = "FAMILY", "Familiar"
         AUTHORIZED = "AUTHORIZED", "Autorizado"
         OTHER = "OTHER", "Otro"
+
+    objects = TenantAwareManager()
 
     resident = models.ForeignKey(Resident, on_delete=models.CASCADE, related_name="unit_links")
     unit = models.ForeignKey(Unit, on_delete=models.PROTECT, related_name="resident_links")
@@ -160,6 +178,11 @@ class Staff(models.Model):
         INACTIVE = "INACTIVE", "Inactivo"
         SUSPENDED = "SUSPENDED", "Suspendido"
 
+    objects = TenantAwareManager()
+
+    condominium = models.ForeignKey(
+        Condominium, on_delete=models.CASCADE, related_name="staff_members", null=True, blank=True
+    )
     person = models.OneToOneField("accounts.Person", on_delete=models.PROTECT, related_name="staff")
     employee_code = models.CharField(max_length=40, unique=True, null=True, blank=True)
     staff_type = models.CharField(max_length=20, choices=Type.choices)

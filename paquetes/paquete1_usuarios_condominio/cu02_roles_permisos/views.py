@@ -138,7 +138,7 @@ class InternalUserCreateView(generics.GenericAPIView):
         },
     )
     def post(self, request):
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         user = serializer.create(serializer.validated_data)
         record_audit_event(
@@ -161,12 +161,19 @@ class PendingResidentsView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated, CanManageRoles]
     serializer_class = PendingResidentSerializer
     pagination_class = None
-    queryset = (
-        User.objects
-        .filter(role__slug="residente", is_approved=False, is_active=True)
-        .select_related("person", "role")
-        .order_by("date_joined")
-    )
+
+    def get_queryset(self):
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        qs = (
+            User.objects
+            .filter(role__slug="residente", is_approved=False, is_active=True)
+            .select_related("person", "role")
+            .order_by("date_joined")
+        )
+        if tenant and not TenantContext.is_global():
+            qs = qs.filter(tenant_memberships__condominium=tenant)
+        return qs
 
     @extend_schema(
         tags=["Roles y Permisos"],
@@ -188,12 +195,17 @@ class ResidentReviewView(generics.GenericAPIView):
     serializer_class = ResidentReviewSerializer
 
     def _get_pending_user(self, pk: int) -> User:
-        try:
-            return User.objects.select_related("role").get(
-                pk=pk, role__slug="residente", is_approved=False,
-            )
-        except User.DoesNotExist:
-            raise NotFound(f"No existe un Residente pendiente con id '{pk}'.")
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        qs = User.objects.select_related("role").filter(
+            pk=pk, role__slug="residente", is_approved=False,
+        )
+        if tenant and not TenantContext.is_global():
+            qs = qs.filter(tenant_memberships__condominium=tenant)
+        user = qs.first()
+        if not user:
+            raise NotFound(f"No existe un Residente pendiente con id '{pk}' en este condominio.")
+        return user
 
     @extend_schema(
         tags=["Roles y Permisos"],

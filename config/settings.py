@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
+    "tenancy.apps.TenancyConfig",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
 ]
 
@@ -42,6 +43,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tenancy.middleware.TenantMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -63,14 +65,34 @@ TEMPLATES = [
 ]
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Configuración predeterminada a PostgreSQL local 'taji'
-DATABASES = {
-    "default": env.db(
-        "DATABASE_URL",
-        default="postgresql://postgres:root@localhost:5432/taji",
-    )
-}
-DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
+import socket
+
+def _is_postgres_listening(host="127.0.0.1", port=5432):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.05)
+        res = s.connect_ex((host, port))
+        s.close()
+        return res == 0
+    except Exception:
+        return False
+
+_env_db = env.db("DATABASE_URL", default="postgresql://postgres:root@localhost:5432/taji")
+
+if _env_db["ENGINE"] == "django.db.backends.postgresql" and not _is_postgres_listening(
+    host=_env_db.get("HOST") or "127.0.0.1",
+    port=int(_env_db.get("PORT") or 5432),
+):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
+else:
+    DATABASES = {"default": _env_db}
+    if DATABASES["default"]["ENGINE"] != "django.db.backends.sqlite3":
+        DATABASES["default"]["CONN_MAX_AGE"] = env.int("DB_CONN_MAX_AGE", default=60)
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
@@ -117,7 +139,11 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["accounts.authentication.CookieJWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
-    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+        "rest_framework.parsers.FormParser",
+        "rest_framework.parsers.MultiPartParser",
+    ],
     "DEFAULT_PAGINATION_CLASS": "config.api.TajiPageNumberPagination",
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "config.api.taji_exception_handler",
@@ -146,6 +172,17 @@ AUTH_COOKIE_REFRESH = "taji_refresh"
 AUTH_COOKIE_SECURE = env.bool("COOKIE_SECURE", default=not DEBUG)
 AUTH_COOKIE_SAMESITE = env("COOKIE_SAMESITE", default="Lax")
 AUTH_COOKIE_DOMAIN = env("COOKIE_DOMAIN", default=None)
+
+# --- RF-09 / T021: QR temporal de visita ---
+# El contenido del QR es un token opaco: en base de datos solo se guarda su hash SHA-256.
+VISIT_QR_TOKEN_BYTES = env.int("VISIT_QR_TOKEN_BYTES", default=24)
+# Vigencia por defecto del QR y techo absoluto para no exceder valid_until.
+VISIT_QR_TTL_MINUTES = env.int("VISIT_QR_TTL_MINUTES", default=240)
+VISIT_QR_MAX_TTL_MINUTES = env.int("VISIT_QR_MAX_TTL_MINUTES", default=1440)
+VISIT_QR_MIN_TTL_MINUTES = env.int("VISIT_QR_MIN_TTL_MINUTES", default=5)
+# Corrección de errores del símbolo QR: "low" | "medium" | "quartile" | "high".
+VISIT_QR_ECC = env("VISIT_QR_ECC", default="medium")
+VISIT_QR_IMAGE_SCALE = env.int("VISIT_QR_IMAGE_SCALE", default=6)
 
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Taji <no-reply@taji.app>")
@@ -183,8 +220,18 @@ SPECTACULAR_SETTINGS = {
         {"name": "Roles y Permisos", "description": "CU02: Gestión de roles, permisos RBAC y aprobación de residentes."},
         {"name": "Residentes", "description": "CU05: CRUD de residentes y copropietarios."},
         {"name": "Personal", "description": "CU07: CRUD y clasificación del personal del condominio."},
+        {"name": "Seguridad - Visitas", "description": "CU08: Registro y autorización anticipada de visitantes."},
+        {"name": "Seguridad - QR de visita", "description": "CU09: Generación y consulta del QR temporal de una visita."},
+        {"name": "Seguridad - Validación QR", "description": "CU10: Validación del QR y autorización de ingreso del visitante."},
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],
 }
+
+# --- SaaS Subscription & Stripe Payments Configuration ---
+PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", default="stripe")
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+STRIPE_CURRENCY = env("STRIPE_CURRENCY", default="bob").lower()
 
 

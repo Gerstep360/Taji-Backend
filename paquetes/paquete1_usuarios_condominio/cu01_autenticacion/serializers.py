@@ -33,6 +33,27 @@ class UserSerializer(serializers.ModelSerializer):
             admin_role = Role.objects.filter(slug="administrador", is_active=True).first()
             if admin_role:
                 data["role"] = RoleSerializer(admin_role).data
+
+        from tenancy.models import TenantMembership
+        from tenancy.context import TenantContext
+        active_tenant = TenantContext.get_current_tenant()
+        if not active_tenant:
+            membership = (
+                TenantMembership.objects.filter(user=instance, is_active=True, is_default=True).select_related("condominium").first()
+                or TenantMembership.objects.filter(user=instance, is_active=True).select_related("condominium").first()
+            )
+            if membership:
+                active_tenant = membership.condominium
+
+        if active_tenant:
+            data["active_tenant"] = {
+                "id": active_tenant.id,
+                "name": active_tenant.name,
+                "slug": getattr(active_tenant, "slug", "") or "",
+                "address": getattr(active_tenant, "address", "") or "",
+            }
+        else:
+            data["active_tenant"] = None
         return data
 
 
@@ -64,9 +85,23 @@ class RegisterSerializer(serializers.ModelSerializer):
         write_only=True, min_length=10, max_length=128, trim_whitespace=False
     )
 
+    condominium_id = serializers.IntegerField(required=False, allow_null=True)
+    condominium_code = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    unit_label = serializers.CharField(required=False, allow_blank=True, max_length=100)
+
     class Meta:
         model = User
-        fields = ("email", "first_name", "last_name", "phone", "password", "password_confirm")
+        fields = (
+            "email",
+            "first_name",
+            "last_name",
+            "phone",
+            "password",
+            "password_confirm",
+            "condominium_id",
+            "condominium_code",
+            "unit_label",
+        )
 
     def validate_email(self, value):
         value = value.strip().lower()
@@ -99,6 +134,10 @@ class RegisterSerializer(serializers.ModelSerializer):
         first_name = data.pop("first_name")
         last_name = data.pop("last_name")
         phone = data.pop("phone", "")
+        condo_id = data.pop("condominium_id", None)
+        condo_code = data.pop("condominium_code", None)
+        unit_label = data.pop("unit_label", "")
+
         resident_role = Role.objects.filter(
             slug="residente", is_active=True, is_public=True
         ).first()
@@ -125,13 +164,32 @@ class RegisterSerializer(serializers.ModelSerializer):
                         phone=phone,
                         contact_email=data["email"],
                     )
-                return User.objects.create_user(
+                user = User.objects.create_user(
                     password=password,
                     role=resident_role,
                     person=person,
                     is_approved=False,
                     **data,
                 )
+
+                from condominiums.models import Condominium
+                from tenancy.models import TenantMembership
+
+                target_condo = None
+                if condo_id:
+                    target_condo = Condominium.objects.filter(id=condo_id, is_active=True).first()
+                elif condo_code:
+                    target_condo = Condominium.objects.filter(slug=condo_code.strip(), is_active=True).first()
+
+                if target_condo:
+                    TenantMembership.objects.create(
+                        user=user,
+                        condominium=target_condo,
+                        role=resident_role,
+                        is_default=True,
+                        is_active=False,
+                    )
+                return user
         except IntegrityError as error:
             if User.objects.filter(email__iexact=data["email"]).exists():
                 raise serializers.ValidationError(

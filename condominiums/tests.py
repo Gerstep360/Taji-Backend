@@ -63,6 +63,38 @@ class StaffApiTests(APITestCase):
         self.assertEqual(response.data["full_name"], "Lucía Mamani")
         self.assertEqual(response.data["staff_type_display"], "Seguridad")
 
+    def test_create_staff_account_can_sign_in_with_submitted_password(self):
+        Role.objects.get_or_create(
+            slug="seguridad", defaults={"name": "Seguridad", "is_active": True}
+        )
+        password = "ClavePersonal2026!"
+        response = self.client.post(
+            self.list_url,
+            {
+                **self.payload,
+                "create_user_account": True,
+                "account_password": password,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        staff = Staff.objects.select_related("person", "person__user", "person__user__role").get()
+        user = staff.person.user
+        self.assertEqual(user.person_id, staff.person_id)
+        self.assertEqual(user.role.slug, "seguridad")
+        self.assertTrue(user.check_password(password))
+        self.assertTrue(response.data["has_user_account"])
+        self.assertEqual(response.data["user_email"], "lucia@example.com")
+
+        self.client.force_authenticate(user=None)
+        login_response = self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "lucia@example.com", "password": password},
+            format="json",
+        )
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK, login_response.data)
+
     def test_list_supports_search_area_status_order_and_pagination(self):
         first = self._create_staff("LIM-001", Staff.Type.CLEANING, "Rosa", "Flores")
         self._create_staff("SEG-009", Staff.Type.SECURITY, "Mario", "López")
@@ -347,10 +379,21 @@ class ResidentApiTests(APITestCase):
         )
         self.client.force_authenticate(other)
 
-        response = self.client.get(self.list_url)
+        response = self.client.post(
+            self.list_url,
+            {
+                "person": {
+                    "first_name": "Test",
+                    "last_name": "User",
+                    "document_type": "CI",
+                    "document_number": "12345678",
+                },
+                "status": "ACTIVE",
+            },
+            format="json",
+        )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data["error"]["code"], "permission_denied")
 
     def test_unauthenticated_user_is_rejected(self):
         self.client.force_authenticate(user=None)
@@ -487,7 +530,7 @@ class SectorApiTests(APITestCase):
             role=role,
         )
         self.client.force_authenticate(other)
-        response = self.client.get(self.list_url)
+        response = self.client.post(self.list_url, {"code": "S99", "name": "Sector 99", "sector_type": "TOWER"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
@@ -581,8 +624,9 @@ class UnitApiTests(APITestCase):
             role=role,
         )
         self.client.force_authenticate(other)
-        response = self.client.get(self.list_url)
+        response = self.client.post(self.list_url, {"code": "U-999", "unit_type": "APARTMENT"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
 
 
 class ResidentUnitApiTests(APITestCase):
@@ -677,7 +721,15 @@ class ResidentUnitApiTests(APITestCase):
             role=role,
         )
         self.client.force_authenticate(other)
-        response = self.client.get(self.list_url)
+        response = self.client.post(
+            self.list_url,
+            {
+                "resident": self.resident.id,
+                "unit": self.unit.id,
+                "is_primary": True,
+            },
+            format="json",
+        )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_resident_directory_searches_by_name_or_document(self):

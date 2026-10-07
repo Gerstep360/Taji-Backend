@@ -149,7 +149,7 @@ class InternalUserCreateSerializer(serializers.Serializer):
     @transaction.atomic
     def create(self, validated_data: dict) -> User:
         role = Role.objects.get(slug=validated_data["role_slug"])
-        return User.objects.create_user(
+        user = User.objects.create_user(
             email=validated_data["email"],
             password=validated_data["password"],
             first_name=validated_data["first_name"],
@@ -157,6 +157,21 @@ class InternalUserCreateSerializer(serializers.Serializer):
             role=role,
             is_approved=True,
         )
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if not tenant:
+            from tenancy.context import TenantContext
+            tenant = TenantContext.get_current_tenant()
+        if tenant:
+            from tenancy.models import TenantMembership
+            TenantMembership.objects.create(
+                user=user,
+                condominium=tenant,
+                role=role,
+                is_default=True,
+                is_active=True,
+            )
+        return user
 
 
 # ── Residentes pendientes ────────────────────────────────────────────────────
@@ -204,17 +219,26 @@ class ResidentReviewSerializer(serializers.Serializer):
     @transaction.atomic
     def save(self) -> User:
         user: User = self.context["user"]
+        request = self.context.get("request")
+        from tenancy.context import TenantContext
+        tenant = getattr(request, "tenant", None) or TenantContext.get_current_tenant()
         action = self.validated_data["action"]
         if action == self.ACTION_APPROVE:
             user.is_approved = True
             user.is_active = True
             user.save(update_fields=["is_approved", "is_active", "updated_at"])
+            if tenant:
+                from tenancy.models import TenantMembership
+                TenantMembership.objects.filter(user=user, condominium=tenant).update(is_active=True)
             # CU05: un Residente aprobado debe aparecer en el directorio del
             # Administrador; se reutiliza la misma Person, sin duplicarla.
             if user.person_id and not Resident.objects.filter(person_id=user.person_id).exists():
-                Resident.objects.create(person=user.person)
+                Resident.objects.create(person=user.person, condominium=tenant)
         else:
             user.is_approved = False
             user.is_active = False
             user.save(update_fields=["is_approved", "is_active", "updated_at"])
+            if tenant:
+                from tenancy.models import TenantMembership
+                TenantMembership.objects.filter(user=user, condominium=tenant).update(is_active=False)
         return user

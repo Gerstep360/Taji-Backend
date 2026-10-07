@@ -96,10 +96,10 @@ fail() {
 [[ $EUID -eq 0 ]] || fail 'Este script debe ejecutarse con sudo.'
 
 check_backend_health() {
-    if curl --fail --silent --connect-timeout 3 "http://127.0.0.1:8000/api/v1/health/" >/dev/null 2>&1; then
+    if curl --fail --silent --connect-timeout 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1:8000/api/v1/health/" >/dev/null 2>&1; then
         return 0
     fi
-    if curl --fail --silent --connect-timeout 3 "http://127.0.0.1/taji/api/v1/health/" >/dev/null 2>&1; then
+    if curl --fail --silent --connect-timeout 3 -H 'X-Forwarded-Proto: https' "http://127.0.0.1/taji/api/v1/health/" >/dev/null 2>&1; then
         return 0
     fi
     return 1
@@ -494,7 +494,8 @@ DATABASE_URL=postgresql://taji:$DB_PASSWORD@127.0.0.1:5432/taji
 ALLOWED_HOSTS=$DOMAIN,localhost,127.0.0.1
 FRONTEND_URLS=$FRONTEND_ORIGIN,http://localhost:4200,http://127.0.0.1:4200
 PASSWORD_RESET_URL=$FRONTEND/restablecer-contrasena
-COOKIE_SECURE=False
+COOKIE_SECURE=True
+SECURE_SSL_REDIRECT=True
 MEDIA_ROOT=/var/lib/taji/media
 CACHE_DIR=/var/cache/taji
 ENV
@@ -509,10 +510,48 @@ ENV
 
         rm -f /etc/nginx/sites-enabled/default
 
+        TLS_DIR="/etc/letsencrypt/live/$DOMAIN"
+        if [[ ! -s "$TLS_DIR/fullchain.pem" || ! -s "$TLS_DIR/privkey.pem" ]]; then
+            cat >/etc/nginx/sites-available/taji-backend <<NGINX
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/taji-acme;
+    }
+
+    location / { return 404; }
+}
+NGINX
+            ln -sf /etc/nginx/sites-available/taji-backend /etc/nginx/sites-enabled/taji-backend
+            nginx -t
+            systemctl reload nginx
+            certbot certonly --non-interactive --agree-tos --no-eff-email \
+                --email "$EMAIL" --webroot -w /var/www/taji-acme -d "$DOMAIN"
+        fi
+
+        [[ -s "$TLS_DIR/fullchain.pem" && -s "$TLS_DIR/privkey.pem" ]] || \
+            fail "Certbot no genero un certificado TLS valido para $DOMAIN."
+
         cat >/etc/nginx/sites-available/taji-backend <<NGINX
 server {
     listen 80;
     server_name $DOMAIN;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/taji-acme;
+    }
+
+    location / { return 301 https://\$host\$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name $DOMAIN;
+    ssl_certificate $TLS_DIR/fullchain.pem;
+    ssl_certificate_key $TLS_DIR/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     location /taji/api/ {
         proxy_pass http://127.0.0.1:8000/api/;
@@ -533,8 +572,21 @@ server {
     location /static/ {
         alias /opt/taji/current/staticfiles/;
     }
+
+    location /taji/static/ {
+        alias /opt/taji/current/staticfiles/;
+    }
 }
 NGINX
+
+        install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+        cat >/etc/letsencrypt/renewal-hooks/deploy/taji-reload-nginx <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+nginx -t
+systemctl reload nginx
+HOOK
+        chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/taji-reload-nginx
 
         if [[ -f /etc/nginx/sites-available/taji-web ]]; then
             ln -sf /etc/nginx/sites-available/taji-web /etc/nginx/sites-enabled/taji-web
@@ -542,7 +594,7 @@ NGINX
         else
             ln -sf /etc/nginx/sites-available/taji-backend /etc/nginx/sites-enabled/taji-backend
         fi
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx
+        nginx -t && systemctl reload nginx
 
         cat >/etc/systemd/system/taji.service <<'SERVICE'
 [Unit]

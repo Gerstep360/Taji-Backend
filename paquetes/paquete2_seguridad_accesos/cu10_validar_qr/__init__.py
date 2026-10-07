@@ -1,0 +1,1 @@
+"""CU10: Validar la autorización de visitante mediante QR (RF-10 / T022)."""
