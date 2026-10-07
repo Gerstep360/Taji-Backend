@@ -1,5 +1,7 @@
 """Vistas REST API para CU13: Gestionar turnos del personal de seguridad."""
 
+from datetime import timedelta
+
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -17,6 +19,7 @@ from condominiums.models import Staff
 from security.models import SecurityShift
 from .permissions import CanManageSecurityShifts, is_admin_or_management, is_security_guard
 from .serializers import SecurityShiftSerializer, ShiftActionSerializer
+from .timing import EARLY_START_MINUTES, closing_timing, start_block_reason
 
 
 @extend_schema_view(
@@ -227,12 +230,26 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
         if shift.status != SecurityShift.Status.SCHEDULED:
             raise ValidationError({"detail": f"No se puede iniciar un turno en estado {shift.get_status_display()}."})
 
-        notes = request.data.get("notes", "").strip() or request.data.get("opening_notes", "").strip()
+        action_data = ShiftActionSerializer(data={
+            "notes": request.data.get("notes") or request.data.get("opening_notes", "")
+        })
+        action_data.is_valid(raise_exception=True)
+        notes = action_data.validated_data["notes"]
 
         with transaction.atomic():
+            # Serializar las operaciones de apertura del mismo guardia.
+            Staff.objects.select_for_update().get(pk=shift.guard_staff_id)
+            shift = SecurityShift.objects.select_for_update().get(pk=shift.pk)
+            now = timezone.now()
+            other_id = SecurityShift.objects.filter(
+                guard_staff_id=shift.guard_staff_id, status=SecurityShift.Status.OPEN
+            ).exclude(pk=shift.pk).values_list("id", flat=True).first()
+            reason = start_block_reason(shift, now, other_id)
+            if reason:
+                raise ValidationError({"detail": reason})
             before_status = shift.status
             shift.status = SecurityShift.Status.OPEN
-            shift.opened_at = timezone.now()
+            shift.opened_at = now
             if notes:
                 shift.opening_notes = notes
             shift.save(update_fields=["status", "opened_at", "opening_notes", "updated_at"])
@@ -273,12 +290,26 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
         if shift.status != SecurityShift.Status.OPEN:
             raise ValidationError({"detail": "Solo se puede cerrar un turno que esté EN_CURSO (iniciado)."})
 
-        notes = request.data.get("notes", "").strip() or request.data.get("closing_notes", "").strip()
+        action_data = ShiftActionSerializer(data={
+            "notes": request.data.get("notes") or request.data.get("closing_notes", "")
+        })
+        action_data.is_valid(raise_exception=True)
+        notes = action_data.validated_data["notes"]
 
         with transaction.atomic():
+            Staff.objects.select_for_update().get(pk=shift.guard_staff_id)
+            shift = SecurityShift.objects.select_for_update().get(pk=shift.pk)
+            if shift.status != SecurityShift.Status.OPEN:
+                raise ValidationError({"detail": "Solo se puede cerrar un turno que esté EN_CURSO (iniciado)."})
+            now = timezone.now()
+            close_type = closing_timing(shift, now)
+            if close_type != "ON_TIME" and not notes:
+                raise ValidationError({
+                    "notes": "Debes indicar el motivo del cierre anticipado o posterior al horario programado."
+                })
             before_status = shift.status
             shift.status = SecurityShift.Status.CLOSED
-            shift.closed_at = timezone.now()
+            shift.closed_at = now
             if notes:
                 shift.closing_notes = notes
             shift.save(update_fields=["status", "closed_at", "closing_notes", "updated_at"])
@@ -290,7 +321,12 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
                 description=f"Turno #{shift.id} cerrado por el guardia {shift.guard_staff.person.full_name}.",
                 actor_user=user,
                 before_data={"status": before_status},
-                after_data={"status": shift.status, "closed_at": shift.closed_at.isoformat()},
+                after_data={
+                    "status": shift.status,
+                    "closed_at": shift.closed_at.isoformat(),
+                    "closing_timing": close_type,
+                    "closing_notes": notes,
+                },
                 request=request,
             )
 
@@ -317,6 +353,8 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
 
         if shift.status == SecurityShift.Status.CLOSED:
             raise ValidationError({"detail": "No se puede cancelar un turno que ya ha sido FINALIZADO."})
+        if shift.status == SecurityShift.Status.OPEN:
+            raise ValidationError({"detail": "Un turno en curso debe cerrarse; no puede cancelarse."})
 
         with transaction.atomic():
             before_status = shift.status
@@ -382,23 +420,33 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
             guard_staff=guard_staff, status=SecurityShift.Status.OPEN
         ).first()
 
-        # 2. Si no hay EN_CURSO, buscar turno PROGRAMADO dentro del horario actual
+        # 2. Turno vigente o dentro de la tolerancia de apertura, incluso si cruza medianoche.
         if not active_shift:
             now = timezone.now()
             active_shift = SecurityShift.objects.filter(
                 guard_staff=guard_staff,
                 status=SecurityShift.Status.SCHEDULED,
-                scheduled_start__lte=now,
-                scheduled_end__gte=now,
-            ).first()
+                scheduled_start__lte=now + timedelta(minutes=EARLY_START_MINUTES),
+                scheduled_end__gt=now,
+            ).order_by("scheduled_start").first()
 
         # 3. Si tampoco hay dentro del rango exacto, tomar el más cercano próximo programado para hoy
         if not active_shift:
             active_shift = SecurityShift.objects.filter(
                 guard_staff=guard_staff,
                 status=SecurityShift.Status.SCHEDULED,
-                scheduled_start__date=timezone.now().date(),
+                scheduled_start__date=timezone.localdate(),
+                scheduled_end__gt=timezone.now(),
             ).order_by("scheduled_start").first()
+
+        # 4. Mostrar el último turno de hoy sin iniciar si no hay uno vigente o próximo.
+        if not active_shift:
+            active_shift = SecurityShift.objects.filter(
+                guard_staff=guard_staff,
+                status=SecurityShift.Status.SCHEDULED,
+                scheduled_end__date=timezone.localdate(),
+                scheduled_end__lte=timezone.now(),
+            ).order_by("-scheduled_end").first()
 
         if not active_shift:
             return Response({"shift": None, "message": "No tienes turnos activos ni asignados para hoy."}, status=status.HTTP_200_OK)
@@ -439,7 +487,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
     @extend_schema(
         tags=["Seguridad - Turnos"],
         summary="Consultar historial de turnos",
-        description="Lista turnos finalizados (CLOSED) y cancelados (CANCELLED) con soporte de filtros por guardia, estado y rango de fechas.",
+        description="Lista turnos finalizados, cancelados y turnos cuyo horario terminó sin iniciar.",
         parameters=[
             OpenApiParameter("guard", int, description="ID del guardia (Staff ID)."),
             OpenApiParameter("status", str, description="CLOSED o CANCELLED."),
@@ -452,7 +500,8 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
     def historial(self, request):
         user = request.user
         queryset = SecurityShift.objects.filter(
-            status__in=[SecurityShift.Status.CLOSED, SecurityShift.Status.CANCELLED]
+            Q(status__in=[SecurityShift.Status.CLOSED, SecurityShift.Status.CANCELLED])
+            | Q(status=SecurityShift.Status.SCHEDULED, scheduled_end__lte=timezone.now())
         ).order_by("-scheduled_start")
 
         if not is_admin_or_management(user):

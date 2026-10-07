@@ -1,6 +1,7 @@
 """Pruebas unitarias e integrales para CU13: Turnos del personal de seguridad."""
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -142,6 +143,34 @@ class CU13SecurityShiftTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["guard_staff"], self.staff_guard1.id)
         self.assertEqual(response.data["status"], SecurityShift.Status.SCHEDULED)
+
+    def test_assigns_current_condominium_when_omitted_or_null(self):
+        self.client.force_authenticate(user=self.user_admin)
+        current = Condominium.objects.filter(is_active=True).first()
+        for offset, extra in enumerate(({}, {"condominium": None})):
+            with self.subTest(extra=extra):
+                start = timezone.now() + timedelta(days=offset + 1)
+                response = self.client.post(reverse("turnos-seguridad-list"), {
+                    "guard_staff": self.staff_guard1.pk,
+                    "scheduled_start": start.isoformat(),
+                    "scheduled_end": (start + timedelta(hours=1)).isoformat(),
+                    **extra,
+                }, format="json")
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertEqual(SecurityShift.objects.get(pk=response.data["id"]).condominium_id, current.pk)
+
+    def test_rejects_unassigned_shift_without_active_condominium(self):
+        Condominium.objects.update(is_active=False)
+        self.client.force_authenticate(user=self.user_admin)
+        start = timezone.now() + timedelta(days=1)
+        response = self.client.post(reverse("turnos-seguridad-list"), {
+            "guard_staff": self.staff_guard1.pk,
+            "scheduled_start": start.isoformat(),
+            "scheduled_end": (start + timedelta(hours=1)).isoformat(),
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("condominium", response.data["error"]["fields"])
+        self.assertFalse(SecurityShift.objects.exists())
 
     def test_02_reject_non_security_staff(self):
         """2. Rechazo de personal que no pertenece al área SEGURIDAD."""
@@ -560,3 +589,176 @@ class CU13SecurityShiftTestCase(APITestCase):
 
         self.assertIsNotNone(audit_entry)
         self.assertEqual(audit_entry.resource_type, "SecurityShift")
+
+    def test_start_window_boundaries_and_late_arrival(self):
+        start = timezone.make_aware(datetime(2026, 10, 6, 8, 0))
+        end = start + timedelta(hours=8)
+        self.client.force_authenticate(user=self.user_guard1)
+        for moment, allowed in [
+            (start - timedelta(minutes=15, microseconds=1), False),
+            (start - timedelta(minutes=15), True),
+            (start, True),
+            (start + timedelta(hours=2), True),
+            (end - timedelta(microseconds=1), True),
+            (end, False),
+            (end + timedelta(hours=1), False),
+        ]:
+            with self.subTest(moment=moment):
+                shift = SecurityShift.objects.create(
+                    guard_staff=self.staff_guard1,
+                    scheduled_start=start, scheduled_end=end,
+                )
+                with patch("django.utils.timezone.now", return_value=moment):
+                    response = self.client.post(reverse("turnos-seguridad-iniciar", args=[shift.pk]))
+                self.assertEqual(response.status_code, 200 if allowed else 400)
+                shift.refresh_from_db()
+                self.assertEqual(shift.status, "OPEN" if allowed else "SCHEDULED")
+                self.assertEqual(shift.opened_at, moment if allowed else None)
+                shift.delete()
+
+    def test_admin_cannot_bypass_start_window(self):
+        now = timezone.now()
+        shift = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=now + timedelta(hours=1),
+            scheduled_end=now + timedelta(hours=9),
+        )
+        self.client.force_authenticate(user=self.user_admin)
+        response = self.client.post(reverse("turnos-seguridad-iniciar", args=[shift.pk]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("15 minutos", response.data["error"]["message"])
+
+    def test_open_shift_blocks_same_guard_but_not_other_guard(self):
+        now = timezone.now()
+        SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=now - timedelta(hours=9),
+            scheduled_end=now - timedelta(hours=1),
+            opened_at=now - timedelta(hours=9), status="OPEN",
+        )
+        shift = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=now, scheduled_end=now + timedelta(hours=8),
+        )
+        self.client.force_authenticate(user=self.user_guard1)
+        response = self.client.post(reverse("turnos-seguridad-iniciar", args=[shift.pk]))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("otro turno abierto", response.data["error"]["message"])
+        shift.refresh_from_db()
+        self.assertIsNone(shift.opened_at)
+
+        other_shift = SecurityShift.objects.create(
+            guard_staff=self.staff_guard2,
+            scheduled_start=now, scheduled_end=now + timedelta(hours=8),
+        )
+        self.client.force_authenticate(user=self.user_guard2)
+        response = self.client.post(reverse("turnos-seguridad-iniciar", args=[other_shift.pk]))
+        self.assertEqual(response.status_code, 200)
+
+    def test_closing_requires_reason_and_audits_real_time(self):
+        start = timezone.make_aware(datetime(2026, 10, 6, 8, 0))
+        end = start + timedelta(hours=8)
+        self.client.force_authenticate(user=self.user_guard1)
+        for moment, expected_type in [
+            (start + timedelta(hours=2), "EARLY"),
+            (end + timedelta(minutes=1), "LATE"),
+        ]:
+            with self.subTest(timing=expected_type):
+                shift = SecurityShift.objects.create(
+                    guard_staff=self.staff_guard1,
+                    scheduled_start=start, scheduled_end=end,
+                    opened_at=start, status="OPEN",
+                )
+                url = reverse("turnos-seguridad-cerrar", args=[shift.pk])
+                with patch("django.utils.timezone.now", return_value=moment):
+                    response = self.client.post(url, {"notes": "   "}, format="json")
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("notes", response.data["error"]["fields"])
+                    shift.refresh_from_db()
+                    self.assertEqual(shift.status, "OPEN")
+                    self.assertIsNone(shift.closed_at)
+                    response = self.client.post(url, {"notes": "  Permiso / demora del relevo  "}, format="json")
+                self.assertEqual(response.status_code, 200)
+                shift.refresh_from_db()
+                self.assertEqual(shift.closed_at, moment)
+                self.assertEqual(shift.closing_notes, "Permiso / demora del relevo")
+                self.assertEqual(response.data["timing"]["closing_timing"], expected_type)
+                event = AuditEvent.objects.get(action_code="SECURITY_SHIFT_CLOSED", resource_id=str(shift.pk))
+                self.assertEqual(event.after_data["closing_timing"], expected_type)
+                self.assertEqual(event.after_data["closing_notes"], shift.closing_notes)
+                shift.delete()
+
+    def test_exact_scheduled_end_closes_without_reason(self):
+        end = timezone.now()
+        shift = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=end - timedelta(hours=8), scheduled_end=end,
+            opened_at=end - timedelta(hours=8), status="OPEN",
+        )
+        self.client.force_authenticate(user=self.user_guard1)
+        with patch("django.utils.timezone.now", return_value=end):
+            response = self.client.post(reverse("turnos-seguridad-cerrar", args=[shift.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["timing"]["closing_timing"], "ON_TIME")
+
+    def test_overdue_shift_stays_open_and_is_visible_to_guard_and_admin(self):
+        now = timezone.now()
+        shift = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=now - timedelta(hours=9), scheduled_end=now - timedelta(hours=1),
+            opened_at=now - timedelta(hours=9), status="OPEN",
+        )
+        self.client.force_authenticate(user=self.user_guard1)
+        response = self.client.get(reverse("turnos-seguridad-actual"))
+        self.assertEqual(response.data["id"], shift.pk)
+        self.assertTrue(response.data["timing"]["is_overdue"])
+        self.assertTrue(response.data["timing"]["close_reason_required"])
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, "OPEN")
+        self.assertIsNone(shift.closed_at)
+        self.client.force_authenticate(user=self.user_admin)
+        response = self.client.get(reverse("turnos-seguridad-detail", args=[shift.pk]))
+        self.assertTrue(response.data["timing"]["is_overdue"])
+        response = self.client.post(reverse("turnos-seguridad-cancelar", args=[shift.pk]))
+        self.assertEqual(response.status_code, 400)
+
+    def test_missed_shift_history_and_current_prefer_upcoming_shift(self):
+        now = timezone.make_aware(datetime(2026, 10, 6, 12, 0))
+        missed = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=now - timedelta(hours=4), scheduled_end=now - timedelta(hours=1),
+        )
+        upcoming = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=now + timedelta(hours=4), scheduled_end=now + timedelta(hours=8),
+        )
+        self.client.force_authenticate(user=self.user_guard1)
+        with patch("django.utils.timezone.now", return_value=now):
+            response = self.client.get(reverse("turnos-seguridad-actual"))
+            self.assertEqual(response.data["id"], upcoming.pk)
+            self.assertFalse(response.data["timing"]["can_start"])
+            history = self.client.get(reverse("turnos-seguridad-historial"))
+            self.assertEqual(len(history.data), 1)
+            self.assertEqual(history.data[0]["id"], missed.pk)
+            self.assertTrue(history.data[0]["timing"]["is_missed"])
+            upcoming.delete()
+            response = self.client.get(reverse("turnos-seguridad-actual"))
+            self.assertEqual(response.data["id"], missed.pk)
+            self.assertFalse(response.data["timing"]["can_start"])
+
+    def test_start_tolerance_across_midnight_and_overnight_shift(self):
+        start = timezone.make_aware(datetime(2026, 10, 7, 0, 5))
+        shift = SecurityShift.objects.create(
+            guard_staff=self.staff_guard1,
+            scheduled_start=start, scheduled_end=start + timedelta(hours=8),
+        )
+        self.client.force_authenticate(user=self.user_guard1)
+        with patch("django.utils.timezone.now", return_value=start - timedelta(minutes=15)):
+            response = self.client.get(reverse("turnos-seguridad-actual"))
+            self.assertEqual(response.data["id"], shift.pk)
+            self.assertTrue(response.data["timing"]["can_start"])
+            response = self.client.post(reverse("turnos-seguridad-iniciar", args=[shift.pk]))
+            self.assertEqual(response.status_code, 200)
+        with patch("django.utils.timezone.now", return_value=start + timedelta(hours=1)):
+            response = self.client.get(reverse("turnos-seguridad-actual"))
+            self.assertEqual(response.data["id"], shift.pk)

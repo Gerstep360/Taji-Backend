@@ -9,6 +9,8 @@ urlpatterns = [
     path("", include("paquetes.paquete2_seguridad_accesos.cu10_validar_qr.urls")),
     path("", include("paquetes.paquete2_seguridad_accesos.cu09_qr_visita.urls")),
     path("", include("paquetes.paquete2_seguridad_accesos.cu13_turnos_seguridad.urls")),
+    path("", include("paquetes.paquete2_seguridad_accesos.cu14_novedades_incidentes.urls")),
+    path("", include("paquetes.paquete2_seguridad_accesos.cu15_entrega_turno.urls")),
     path("cu17/", include("paquetes.paquete2_seguridad_accesos.cu17_verificacion_facial.urls")),
 
     path("facial/", include("paquetes.paquete2_seguridad_accesos.cu17_verificacion_facial.urls")),

@@ -6,6 +6,7 @@ from rest_framework import serializers
 
 from condominiums.models import Condominium, Staff
 from security.models import SecurityShift
+from .timing import closing_timing, start_allowed_at, start_block_reason
 
 
 class SecurityShiftSerializer(serializers.ModelSerializer):
@@ -21,6 +22,7 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     condominium_name = serializers.SerializerMethodField(read_only=True)
+    timing = serializers.SerializerMethodField(read_only=True)
     
     # Aliases de compatibilidad para RF-13 / prompt
     fecha = serializers.DateField(required=False, write_only=True)
@@ -61,6 +63,7 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
             "created_by_user",
             "created_at",
             "updated_at",
+            "timing",
         )
         read_only_fields = (
             "id",
@@ -86,6 +89,31 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
         if obj.condominium:
             return obj.condominium.name
         return ""
+
+    def get_timing(self, obj) -> dict:
+        now = self.context.setdefault("shift_server_time", timezone.now())
+        open_shifts = self.context.setdefault("guard_open_shifts", {})
+        if obj.guard_staff_id not in open_shifts:
+            open_shifts[obj.guard_staff_id] = SecurityShift.objects.filter(
+                guard_staff_id=obj.guard_staff_id, status=SecurityShift.Status.OPEN
+            ).values_list("id", flat=True).first()
+        other_id = open_shifts[obj.guard_staff_id]
+        if other_id == obj.pk:
+            other_id = None
+        reason = start_block_reason(obj, now, other_id)
+        close_at = obj.closed_at or now
+        return {
+            "server_time": now.isoformat(),
+            "start_allowed_at": start_allowed_at(obj).isoformat(),
+            "can_start": not reason,
+            "start_block_reason": reason,
+            "other_open_shift_id": other_id,
+            "is_overdue": obj.status == SecurityShift.Status.OPEN and now >= obj.scheduled_end,
+            "is_missed": obj.status == SecurityShift.Status.SCHEDULED and now >= obj.scheduled_end,
+            "closing_timing": closing_timing(obj, close_at),
+            "close_reason_required": obj.status == SecurityShift.Status.OPEN
+            and closing_timing(obj, now) != "ON_TIME",
+        }
 
     def validate(self, attrs):
         # 1. Resolver fechas y horas si vienen como fecha + hora_inicio_planificada + hora_fin_planificada
@@ -149,6 +177,19 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"detail": "Existe solapamiento de horario con otro turno registrado para este guardia de seguridad."}
             )
+
+        # Use the same current-condominium convention as CU03 when the
+        # scheduling client does not provide an association. Preserve existing
+        # associations when updating a shift.
+        if not attrs.get("condominium"):
+            condominium = getattr(self.instance, "condominium", None)
+            if condominium is None:
+                condominium = Condominium.objects.filter(is_active=True).first()
+            if condominium is None:
+                raise serializers.ValidationError({
+                    "condominium": "Configura un condominio activo antes de programar turnos."
+                })
+            attrs["condominium"] = condominium
 
         return attrs
 
