@@ -161,6 +161,20 @@ class SecurityShift(models.Model):
         CLOSED = "CLOSED", "Cerrado"
         CANCELLED = "CANCELLED", "Cancelado"
 
+    condominium = models.ForeignKey(
+        "condominiums.Condominium",
+        on_delete=models.SET_NULL,
+        related_name="security_shifts",
+        null=True,
+        blank=True,
+    )
+    created_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        related_name="created_security_shifts",
+        null=True,
+        blank=True,
+    )
     guard_staff = models.ForeignKey(
         "condominiums.Staff", on_delete=models.PROTECT, related_name="security_shifts"
     )
@@ -171,7 +185,10 @@ class SecurityShift(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
     opening_notes = models.TextField(blank=True)
     closing_notes = models.TextField(blank=True)
+    observation = models.TextField(blank=True)
     created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
 
     class Meta:
         db_table = "security_shift"

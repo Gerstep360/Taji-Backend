@@ -1,4 +1,5 @@
-from rest_framework import status, viewsets
+from django.contrib.auth import password_validation
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
@@ -7,6 +8,7 @@ from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
 from accounts.models import Person
 from auditlog.services import record_audit_event
 from condominiums.models import Staff
@@ -56,12 +58,11 @@ class StaffViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         from tenancy.context import TenantContext
         tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
-        queryset = Staff.objects.select_related("person")
+        queryset = Staff.objects.select_related("person", "person__user", "person__user__role")
         if tenant and not TenantContext.is_global():
             queryset = queryset.filter(
                 Q(condominium=tenant) | Q(person__user__tenant_memberships__condominium=tenant)
             ).distinct()
-
         staff_type = self.request.query_params.get("staff_type", "").strip().upper()
         staff_status = self.request.query_params.get("status", "").strip().upper()
         search = self.request.query_params.get("search", "").strip()
@@ -95,6 +96,57 @@ class StaffViewSet(viewsets.ModelViewSet):
                 "document_types": self._choices(Person.DocumentType.choices),
             }
         )
+
+    @extend_schema(
+        tags=["Personal"],
+        summary="Restablecer contraseña de usuario del personal",
+        methods=["POST"],
+    )
+    @action(detail=True, methods=["post"], url_path="reset-password")
+    def reset_password(self, request, pk=None):
+        staff = self.get_object()
+        user = getattr(staff.person, "user", None)
+        if not user:
+            return Response(
+                {"detail": "El personal no tiene una cuenta de usuario asociada."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        password = request.data.get("password")
+        password_confirm = request.data.get("password_confirm")
+
+        if not password:
+            return Response(
+                {"password": ["La contraseña es obligatoria."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if password != password_confirm:
+            return Response(
+                {"password_confirm": ["Las contraseñas no coinciden."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            password_validation.validate_password(password, user)
+        except DjangoValidationError as err:
+            return Response(
+                {"password": list(err.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(password)
+        user.save(update_fields=["password"])
+
+        record_audit_event(
+            action_code="staff.password_reset",
+            resource_type="Staff",
+            resource_id=staff.id,
+            description=f"Contraseña restablecida para el personal: {staff.person.full_name}.",
+            actor_user=request.user,
+            request=request,
+        )
+
+        return Response({"detail": "Contraseña restablecida exitosamente."})
 
     @staticmethod
     def _choices(choices):
@@ -135,7 +187,8 @@ class StaffViewSet(viewsets.ModelViewSet):
             resource_id=instance.id,
             description=f"Vínculo de personal eliminado: {name} ({emp_code}).",
             actor_user=self.request.user,
-            request=self.request,
+            request=request if (request := getattr(self, "request", None)) else None,
         )
         super().perform_destroy(instance)
+
 
