@@ -3,6 +3,7 @@
 from django.urls import include, path
 
 urlpatterns = [
+    path("cu12/", include("paquetes.paquete2_seguridad_accesos.cu12_consultar_visitas_dentro.urls")),
     path("", include("security.urls")),
     path("", include("paquetes.paquete2_seguridad_accesos.cu08_visitantes.urls")),
     # CU10 se declara antes que CU09: `visit-qr/validate/` es un segmento fijo y
