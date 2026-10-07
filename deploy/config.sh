@@ -23,24 +23,17 @@ cd "$SCRIPT_DIR"
 
 if [[ -f "/opt/taji/current/.venv/bin/python" ]]; then
     PYTHON="/opt/taji/current/.venv/bin/python"
-    SETTINGS="--settings=config.settings_production"
+    export DJANGO_SETTINGS_MODULE="config.settings_production"
 elif [[ -f "$SCRIPT_DIR/.venv/bin/python" ]]; then
     PYTHON="$SCRIPT_DIR/.venv/bin/python"
-    SETTINGS=""
 elif [[ -f "$SCRIPT_DIR/.venv/Scripts/python.exe" ]]; then
     PYTHON="$SCRIPT_DIR/.venv/Scripts/python.exe"
-    SETTINGS=""
 else
     PYTHON="python3"
-    SETTINGS=""
 fi
 
 run_manage() {
-    if [[ -n "$SETTINGS" ]]; then
-        "$PYTHON" manage.py manage_tenants "$@" "$SETTINGS"
-    else
-        "$PYTHON" manage.py manage_tenants "$@"
-    fi
+    "$PYTHON" manage.py manage_tenants "$@"
 }
 
 show_menu() {
