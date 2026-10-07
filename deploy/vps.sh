@@ -304,10 +304,25 @@ do_deploy_backend() {
     ln -sf "$ENV_FILE" "$RELEASE/.env"
     chown -R taji:taji "$RELEASE"
 
+    # Dependencias de sistema para visión artificial (OpenCV / InsightFace)
+    if ! dpkg -s libgl1 >/dev/null 2>&1 || ! dpkg -s libglib2.0-0 >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq libgl1 libglib2.0-0 >/dev/null 2>&1 || true
+    fi
+
     (runuser -u taji -- python3 -m venv "$RELEASE/.venv" && \
      runuser -u taji -- "$RELEASE/.venv/bin/pip" install --upgrade pip --quiet >/dev/null 2>&1 && \
      runuser -u taji -- "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt" gunicorn --quiet >/dev/null 2>&1) &
     animated_progress_bar $! "Creando entorno virtual Python e instalando Django y Gunicorn"
+
+    # Preparar directorio compartido y modelos biométricos InsightFace (CU17)
+    mkdir -p "$ROOT/shared/ai_models/models"
+    if [[ ! -f "$ROOT/shared/ai_models/models/buffalo_s/det_500m.onnx" ]]; then
+        (curl -sSL -o "$ROOT/shared/ai_models/models/buffalo_s.zip" "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip" && \
+         unzip -q -o -d "$ROOT/shared/ai_models/models/buffalo_s" "$ROOT/shared/ai_models/models/buffalo_s.zip" && \
+         rm -f "$ROOT/shared/ai_models/models/buffalo_s.zip") >/dev/null 2>&1 || true
+    fi
+    ln -sfn "$ROOT/shared/ai_models" "$RELEASE/ai_models"
+    chown -R taji:taji "$ROOT/shared/ai_models" "$RELEASE/ai_models"
 
     chmod -R a+rX "$RELEASE"
     chmod +x "$RELEASE/.venv/bin/"* 2>/dev/null || true
