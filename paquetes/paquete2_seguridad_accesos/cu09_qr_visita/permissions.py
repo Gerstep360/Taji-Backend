@@ -24,6 +24,9 @@ class CanIssueVisitQr(BasePermission):
         if not (user and user.is_authenticated):
             return False
 
+        if user.is_superuser or user.has_system_permission("manage_visits"):
+            return True
+
         if request.method in SAFE_METHODS:
             return user.has_system_permission("manage_visits") or user.has_system_permission(
                 "register_visits"
@@ -33,7 +36,7 @@ class CanIssueVisitQr(BasePermission):
 
     def has_object_permission(self, request, view, obj):
         user = request.user
-        if user.has_system_permission("manage_visits"):
+        if user.is_superuser or user.has_system_permission("manage_visits"):
             return True
 
         resident = getattr(getattr(user, "person", None), "resident", None)

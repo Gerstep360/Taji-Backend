@@ -33,7 +33,12 @@ class SectorViewSet(viewsets.ModelViewSet):
     ordering = ("code",)
 
     def get_queryset(self):
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
         queryset = Sector.objects.select_related("parent")
+        if tenant and not TenantContext.is_global():
+            queryset = queryset.filter(condominium=tenant)
+
         sector_type = self.request.query_params.get("sector_type", "").strip().upper()
         search = self.request.query_params.get("search", "").strip()
 
@@ -53,7 +58,9 @@ class SectorViewSet(viewsets.ModelViewSet):
         return [{"value": value, "label": label} for value, label in choices]
 
     def perform_create(self, serializer):
-        sector = serializer.save()
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        sector = serializer.save(condominium=tenant) if (tenant and not TenantContext.is_global()) else serializer.save()
         record_audit_event(
             action_code="condominium.sector.created",
             resource_type="Sector",
@@ -109,7 +116,12 @@ class UnitViewSet(viewsets.ModelViewSet):
     ordering = ("code",)
 
     def get_queryset(self):
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
         queryset = Unit.objects.select_related("sector")
+        if tenant and not TenantContext.is_global():
+            queryset = queryset.filter(sector__condominium=tenant)
+
         sector_id = self.request.query_params.get("sector", "").strip()
         unit_type = self.request.query_params.get("unit_type", "").strip().upper()
         unit_status = self.request.query_params.get("status", "").strip().upper()

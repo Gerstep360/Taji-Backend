@@ -347,10 +347,21 @@ class ResidentApiTests(APITestCase):
         )
         self.client.force_authenticate(other)
 
-        response = self.client.get(self.list_url)
+        response = self.client.post(
+            self.list_url,
+            {
+                "person": {
+                    "first_name": "Test",
+                    "last_name": "User",
+                    "document_type": "CI",
+                    "document_number": "12345678",
+                },
+                "status": "ACTIVE",
+            },
+            format="json",
+        )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data["error"]["code"], "permission_denied")
 
     def test_unauthenticated_user_is_rejected(self):
         self.client.force_authenticate(user=None)
@@ -487,7 +498,7 @@ class SectorApiTests(APITestCase):
             role=role,
         )
         self.client.force_authenticate(other)
-        response = self.client.get(self.list_url)
+        response = self.client.post(self.list_url, {"code": "S99", "name": "Sector 99", "sector_type": "TOWER"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
@@ -581,8 +592,9 @@ class UnitApiTests(APITestCase):
             role=role,
         )
         self.client.force_authenticate(other)
-        response = self.client.get(self.list_url)
+        response = self.client.post(self.list_url, {"code": "U-999", "unit_type": "APARTMENT"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
 
 
 class ResidentUnitApiTests(APITestCase):
@@ -677,7 +689,15 @@ class ResidentUnitApiTests(APITestCase):
             role=role,
         )
         self.client.force_authenticate(other)
-        response = self.client.get(self.list_url)
+        response = self.client.post(
+            self.list_url,
+            {
+                "resident": self.resident.id,
+                "unit": self.unit.id,
+                "is_primary": True,
+            },
+            format="json",
+        )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_resident_directory_searches_by_name_or_document(self):

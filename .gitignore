@@ -227,3 +227,8 @@ __marimo__/
 *.apk
 downloads/
 
+# AI Models and heavy weights
+ai_models/
+*.onnx
+*.zip
+

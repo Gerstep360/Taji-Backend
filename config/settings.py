@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
+    "tenancy.apps.TenancyConfig",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
 ]
 
@@ -42,6 +43,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "tenancy.middleware.TenantMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -77,7 +79,10 @@ def _is_postgres_listening(host="127.0.0.1", port=5432):
 
 _env_db = env.db("DATABASE_URL", default="postgresql://postgres:root@localhost:5432/taji")
 
-if _env_db["ENGINE"] == "django.db.backends.postgresql" and not _is_postgres_listening():
+if _env_db["ENGINE"] == "django.db.backends.postgresql" and not _is_postgres_listening(
+    host=_env_db.get("HOST") or "127.0.0.1",
+    port=int(_env_db.get("PORT") or 5432),
+):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -134,7 +139,11 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["accounts.authentication.CookieJWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
-    "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+        "rest_framework.parsers.FormParser",
+        "rest_framework.parsers.MultiPartParser",
+    ],
     "DEFAULT_PAGINATION_CLASS": "config.api.TajiPageNumberPagination",
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "config.api.taji_exception_handler",
@@ -217,5 +226,12 @@ SPECTACULAR_SETTINGS = {
         {"name": "Sistema", "description": "Salud y metadatos del servicio."},
     ],
 }
+
+# --- SaaS Subscription & Stripe Payments Configuration ---
+PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", default="stripe")
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+STRIPE_CURRENCY = env("STRIPE_CURRENCY", default="bob").lower()
 
 

@@ -54,7 +54,14 @@ class StaffViewSet(viewsets.ModelViewSet):
     lookup_value_regex = "[0-9]+"
 
     def get_queryset(self):
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
         queryset = Staff.objects.select_related("person")
+        if tenant and not TenantContext.is_global():
+            queryset = queryset.filter(
+                Q(condominium=tenant) | Q(person__user__tenant_memberships__condominium=tenant)
+            ).distinct()
+
         staff_type = self.request.query_params.get("staff_type", "").strip().upper()
         staff_status = self.request.query_params.get("status", "").strip().upper()
         search = self.request.query_params.get("search", "").strip()
@@ -94,7 +101,9 @@ class StaffViewSet(viewsets.ModelViewSet):
         return [{"value": value, "label": label} for value, label in choices]
 
     def perform_create(self, serializer):
-        staff = serializer.save()
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        staff = serializer.save(condominium=tenant)
         record_audit_event(
             action_code="staff.created",
             resource_type="Staff",

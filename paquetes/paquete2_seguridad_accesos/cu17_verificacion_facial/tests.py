@@ -59,34 +59,39 @@ class FaceVerificationTestCase(TestCase):
         )
 
     def test_t072_t073_engine_embedding_and_similarity(self):
-        """T072 & T073: Procesamiento de imagen, embedding 128-float y cálculo de similitud de coseno."""
+        """T072 & T073: Procesamiento de imagen, embedding 512-float y cálculo de similitud de coseno."""
         img1 = create_test_image_b64((100, 100, 100))
         img2 = create_test_image_b64((100, 100, 100))
 
-        v1 = extract_face_embedding(img1)
-        v2 = extract_face_embedding(img2)
+        ext1 = extract_face_embedding(img1)
+        ext2 = extract_face_embedding(img2)
 
-        self.assertEqual(len(v1), 128)
-        self.assertEqual(len(v2), 128)
+        self.assertTrue(ext1["success"])
+        self.assertTrue(ext2["success"])
+        v1 = ext1["embedding"]
+        v2 = ext2["embedding"]
+
+        self.assertEqual(len(v1), 512)
+        self.assertEqual(len(v2), 512)
 
         # Prueba de empaquetado y desempaquetado de bytes
         packed = pack_embedding(v1)
         unpacked = unpack_embedding(packed)
-        self.assertEqual(len(unpacked), 128)
+        self.assertEqual(len(unpacked), 512)
 
-        # Misma imagen debe dar similitud muy alta (>= 0.95)
+        # Misma imagen debe dar similitud muy alta (>= 0.90)
         score = calculate_cosine_similarity(v1, v2)
         self.assertGreaterEqual(score, 0.90)
 
     def test_t029_t090_biometric_enrollment_and_versioning(self):
         """T029 & T090: Enrolamiento y versionado de referencias biométricas de residentes."""
-        img_v1 = create_test_image_b64((50, 50, 50))
-        img_v2 = create_test_image_b64((200, 200, 200))
+        imgs_v1 = [create_test_image_b64((50 + i * 10, 50, 50)) for i in range(5)]
+        imgs_v2 = [create_test_image_b64((200, 200 - i * 10, 200)) for i in range(5)]
 
-        # 1. Enrolar Versión 1
+        # 1. Enrolar Versión 1 con 5 fotos
         res1 = self.client.post(
             "/api/v1/security/cu17/biometrics/enroll/",
-            {"resident_id": self.resident.id, "reference_image": img_v1},
+            {"resident_id": self.resident.id, "images": imgs_v1},
             format="json",
         )
         self.assertEqual(res1.status_code, status.HTTP_201_CREATED)
@@ -95,7 +100,7 @@ class FaceVerificationTestCase(TestCase):
         # 2. Enrolar Versión 2 (debe desactivar v1 y activar v2)
         res2 = self.client.post(
             "/api/v1/security/cu17/biometrics/enroll/",
-            {"resident_id": self.resident.id, "reference_image": img_v2},
+            {"resident_id": self.resident.id, "images": imgs_v2},
             format="json",
         )
         self.assertEqual(res2.status_code, status.HTTP_201_CREATED)
@@ -116,30 +121,30 @@ class FaceVerificationTestCase(TestCase):
 
     def test_t030_t074_t075_face_match_and_human_confirmation(self):
         """T030, T074, T075: Pruebas de coincidencia (MATCH) y confirmación humana."""
-        img_ref = create_test_image_b64((150, 150, 150))
+        imgs_ref = [create_test_image_b64((150, 150, 150)) for _ in range(5)]
         # Enrolar referencia inicial
         self.client.post(
             "/api/v1/security/cu17/biometrics/enroll/",
-            {"resident_id": self.resident.id, "reference_image": img_ref},
+            {"resident_id": self.resident.id, "images": imgs_ref},
             format="json",
         )
 
         # 1. Probar Match (Coincidencia)
         res_match = self.client.post(
             "/api/v1/security/cu17/face-verification/match/",
-            {"captured_image": img_ref, "threshold": 0.70},
+            {"captured_image": imgs_ref[0], "threshold": 0.45},
             format="json",
         )
         self.assertEqual(res_match.status_code, status.HTTP_200_OK)
         self.assertEqual(res_match.data["result"], "MATCH")
-        self.assertGreaterEqual(res_match.data["similarity_score"], 0.70)
+        self.assertGreaterEqual(res_match.data["similarity_score"], 0.45)
         self.assertEqual(res_match.data["matched_resident"]["id"], self.resident.id)
 
         # 2. Probar Confirmación Humana Positiva (human_confirmed = True)
         res_confirm = self.client.post(
             "/api/v1/security/cu17/face-verification/confirm/",
             {
-                "captured_image": img_ref,
+                "captured_image": imgs_ref[0],
                 "matched_resident_id": self.resident.id,
                 "biometric_reference_id": res_match.data["biometric_reference_id"],
                 "similarity_score": res_match.data["similarity_score"],

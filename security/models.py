@@ -4,8 +4,12 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
+from tenancy.managers import TenantAwareManager
+
 
 class VisitAuthorization(models.Model):
+    objects = TenantAwareManager()
+
     class Status(models.TextChoices):
         AUTHORIZED = "AUTHORIZED", "Autorizada"
         ACTIVE = "ACTIVE", "Activa"

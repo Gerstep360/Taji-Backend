@@ -215,6 +215,18 @@ class LoginView(generics.GenericAPIView):
             actor_user=user,
             request=request,
         )
+        # Sincronizar active_tenant_id en sesión con la membresía auténtica del usuario
+        if hasattr(request, "session"):
+            from tenancy.models import TenantMembership
+            default_mem = (
+                TenantMembership.objects.filter(user=user, is_active=True, is_default=True).first()
+                or TenantMembership.objects.filter(user=user, is_active=True).first()
+            )
+            if default_mem:
+                request.session["active_tenant_id"] = default_mem.condominium_id
+            else:
+                request.session.pop("active_tenant_id", None)
+
         tokens = token_pair_for_user(user)
         payload = {"message": "Sesión iniciada.", "user": UserSerializer(user).data}
         if serializer.validated_data["client"] == "mobile":
@@ -314,6 +326,8 @@ class LogoutView(generics.GenericAPIView):
             actor_user=actor,
             request=request,
         )
+        if hasattr(request, "session"):
+            request.session.flush()
         return clear_auth_cookies(Response(status=status.HTTP_204_NO_CONTENT))
 
 
@@ -361,13 +375,44 @@ class MeView(generics.GenericAPIView):
                 }
                 for link in linked_links
             ]
+        active_tenant = getattr(request, "tenant", None)
+        if not active_tenant:
+            from tenancy.context import TenantContext
+            active_tenant = TenantContext.get_current_tenant()
+
+        tenant_payload = None
+        if active_tenant:
+            tenant_payload = {
+                "id": active_tenant.id,
+                "name": active_tenant.name,
+                "slug": getattr(active_tenant, "slug", "") or "",
+                "address": getattr(active_tenant, "address", "") or "",
+            }
+
+        from tenancy.models import TenantMembership
+        memberships = TenantMembership.objects.filter(user=request.user, is_active=True).select_related("condominium", "role")
+        available_tenants = [
+            {
+                "id": m.condominium_id,
+                "name": m.condominium.name,
+                "slug": getattr(m.condominium, "slug", "") or "",
+                "role_name": m.role.name if m.role else "",
+                "is_default": m.is_default,
+            }
+            for m in memberships
+        ]
+
         return Response(
             {
                 "user": {
                     **user_data,
                     "resident_units": resident_units,
                     "linked_residents": linked_residents,
+                    "active_tenant": tenant_payload,
+                    "available_tenants": available_tenants,
                 },
+                "active_tenant": tenant_payload,
+                "available_tenants": available_tenants,
             }
         )
 

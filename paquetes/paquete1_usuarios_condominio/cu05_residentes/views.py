@@ -56,7 +56,16 @@ class ResidentViewSet(
     lookup_value_regex = "[0-9]+"
 
     def get_queryset(self):
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
         queryset = Resident.objects.select_related("person")
+        if tenant and not TenantContext.is_global():
+            queryset = queryset.filter(
+                Q(condominium=tenant)
+                | Q(unit_links__unit__sector__condominium=tenant)
+                | Q(person__user__tenant_memberships__condominium=tenant)
+            ).distinct()
+
         resident_status = self.request.query_params.get("status", "").strip().upper()
         search = self.request.query_params.get("search", "").strip()
 
@@ -71,6 +80,22 @@ class ResidentViewSet(
                 | Q(person__phone__icontains=search)
             )
         return queryset
+
+    def perform_create(self, serializer):
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        resident = serializer.save(condominium=tenant)
+        if tenant and resident.person.contact_email:
+            from accounts.models import Role, User
+            from tenancy.models import TenantMembership
+            user = getattr(resident.person, "user", None) or User.objects.filter(email__iexact=resident.person.contact_email).first()
+            if user:
+                res_role = Role.objects.filter(slug="residente").first()
+                TenantMembership.objects.get_or_create(
+                    user=user,
+                    condominium=tenant,
+                    defaults={"role": res_role, "is_active": True, "is_default": True},
+                )
 
     @extend_schema(
         tags=["Residentes"],
