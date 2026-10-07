@@ -6,7 +6,10 @@ import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(DEBUG=(bool, True), COOKIE_SECURE=(bool, False))
-environ.Env.read_env(BASE_DIR / ".env")
+if Path("/etc/taji/backend.env").exists():
+    environ.Env.read_env("/etc/taji/backend.env")
+if (BASE_DIR / ".env").exists():
+    environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="django-insecure-local-only-change-this-before-production")
 DEBUG = env.bool("DEBUG", default=True)

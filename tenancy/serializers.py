@@ -136,7 +136,9 @@ class CreatePaymentIntentRequestSerializer(serializers.Serializer):
 
 
 class ConfirmSandboxPaymentRequestSerializer(serializers.Serializer):
-    payment_id = serializers.IntegerField(min_value=1)
+    payment_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    plan_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    condominium_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
 
 
 class UpdateCondominiumProfileSerializer(serializers.ModelSerializer):

@@ -14,17 +14,25 @@ class CanManageFaceVerification(permissions.BasePermission):
         if request.user.is_staff or request.user.is_superuser:
             return True
 
-        role_slugs = set(request.user.roles.values_list("slug", flat=True))
-        if "administrador" in role_slugs or "seguridad" in role_slugs:
+        role_slug = request.user.role.slug if request.user.role else ""
+        if role_slug in ("administrador", "seguridad", "directiva"):
             return True
 
-        user_permissions = set(
-            request.user.roles.values_list("permissions__code", flat=True)
-        )
+        membership = getattr(request, "tenant_membership", None)
+        if membership and membership.role:
+            if membership.role.slug in ("administrador", "seguridad", "directiva"):
+                return True
+
         required = {
             "validate_visits",
             "register_entry_exit",
             "capture_security_evidence",
             "manage_residents",
         }
-        return bool(user_permissions & required)
+        for code in required:
+            if request.user.has_system_permission(code):
+                return True
+            if membership and membership.role and membership.role.permissions.filter(code=code, is_active=True).exists():
+                return True
+
+        return False

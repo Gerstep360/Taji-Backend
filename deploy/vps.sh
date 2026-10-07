@@ -304,10 +304,25 @@ do_deploy_backend() {
     ln -sf "$ENV_FILE" "$RELEASE/.env"
     chown -R taji:taji "$RELEASE"
 
+    # Dependencias de sistema para visión artificial (OpenCV / InsightFace)
+    if ! dpkg -s libgl1 >/dev/null 2>&1 || ! dpkg -s libglib2.0-0 >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq libgl1 libglib2.0-0 >/dev/null 2>&1 || true
+    fi
+
     (runuser -u taji -- python3 -m venv "$RELEASE/.venv" && \
      runuser -u taji -- "$RELEASE/.venv/bin/pip" install --upgrade pip --quiet >/dev/null 2>&1 && \
      runuser -u taji -- "$RELEASE/.venv/bin/pip" install -r "$RELEASE/requirements.txt" gunicorn --quiet >/dev/null 2>&1) &
     animated_progress_bar $! "Creando entorno virtual Python e instalando Django y Gunicorn"
+
+    # Preparar directorio compartido y modelos biométricos InsightFace (CU17)
+    mkdir -p "$ROOT/shared/ai_models/models"
+    if [[ ! -f "$ROOT/shared/ai_models/models/buffalo_s/det_500m.onnx" ]]; then
+        (curl -sSL -o "$ROOT/shared/ai_models/models/buffalo_s.zip" "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip" && \
+         unzip -q -o -d "$ROOT/shared/ai_models/models/buffalo_s" "$ROOT/shared/ai_models/models/buffalo_s.zip" && \
+         rm -f "$ROOT/shared/ai_models/models/buffalo_s.zip") >/dev/null 2>&1 || true
+    fi
+    ln -sfn "$ROOT/shared/ai_models" "$RELEASE/ai_models"
+    chown -R taji:taji "$ROOT/shared/ai_models" "$RELEASE/ai_models"
 
     chmod -R a+rX "$RELEASE"
     chmod +x "$RELEASE/.venv/bin/"* 2>/dev/null || true
@@ -360,6 +375,17 @@ run_action() {
 
     if [[ $MODE == "superuser" || $MODE == "createsuperuser" ]]; then
         do_create_superuser
+        return 0
+    fi
+
+    if [[ $MODE == "config" || $MODE == "saas" || $MODE == "tenants" ]]; then
+        if [[ -x "$ROOT/current/config.sh" ]]; then
+            "$ROOT/current/config.sh"
+        elif [[ -x "$(dirname "${BASH_SOURCE[0]}")/config.sh" ]]; then
+            "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+        elif [[ -x "$(dirname "${BASH_SOURCE[0]}")/../config.sh" ]]; then
+            "$(dirname "${BASH_SOURCE[0]}")/../config.sh"
+        fi
         return 0
     fi
 
@@ -643,10 +669,11 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[8] ${RESET} ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                  |"
     echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
     echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
-    echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
+    echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[&] Gestor SaaS: Tenants, Condominios y Roles (config.sh)${RESET}       |"
+    echo -e "|  ${BRIGHT_CYAN}[12]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-11]: " CHOICE
+    read -p " Selecciona una opcion [1-12]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
@@ -658,7 +685,8 @@ while true; do
         8) run_action "health" || true ;;
         9) run_action "restart" || true ;;
         10) run_action "logs" || true ;;
-        11) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        11) run_action "config" || true ;;
+        12) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 
