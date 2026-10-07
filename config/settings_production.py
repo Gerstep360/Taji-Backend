@@ -3,9 +3,11 @@ from django.core.exceptions import ImproperlyConfigured
 from .settings import *  # noqa: F403
 
 DEBUG = False
-SECRET_KEY = env("DJANGO_SECRET_KEY")
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS")
-if len(SECRET_KEY) < 50 or SECRET_KEY.startswith("django-insecure-"):
+if not env.str("DJANGO_SECRET_KEY", default="") and Path("/etc/taji/backend.env").exists():
+    environ.Env.read_env("/etc/taji/backend.env")
+SECRET_KEY = env("DJANGO_SECRET_KEY", default="")
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost", "167.86.106.105"])
+if not SECRET_KEY or len(SECRET_KEY) < 50 or SECRET_KEY.startswith("django-insecure-"):
     raise ImproperlyConfigured("Configure a random DJANGO_SECRET_KEY of at least 50 characters.")
 if not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS:
     raise ImproperlyConfigured("Production requires explicit ALLOWED_HOSTS.")

@@ -378,6 +378,17 @@ run_action() {
         return 0
     fi
 
+    if [[ $MODE == "config" || $MODE == "saas" || $MODE == "tenants" ]]; then
+        if [[ -x "$ROOT/current/config.sh" ]]; then
+            "$ROOT/current/config.sh"
+        elif [[ -x "$(dirname "${BASH_SOURCE[0]}")/config.sh" ]]; then
+            "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+        elif [[ -x "$(dirname "${BASH_SOURCE[0]}")/../config.sh" ]]; then
+            "$(dirname "${BASH_SOURCE[0]}")/../config.sh"
+        fi
+        return 0
+    fi
+
     if [[ $MODE == "users" || $MODE == "listusers" ]]; then
         do_list_users
         return 0
@@ -658,10 +669,11 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[8] ${RESET} ${WHITE}[?] Verificar Estado de Salud API (Health Check)${RESET}                  |"
     echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
     echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
-    echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
+    echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[&] Gestor SaaS: Tenants, Condominios y Roles (config.sh)${RESET}       |"
+    echo -e "|  ${BRIGHT_CYAN}[12]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
     
-    read -p " Selecciona una opcion [1-11]: " CHOICE
+    read -p " Selecciona una opcion [1-12]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
@@ -673,7 +685,8 @@ while true; do
         8) run_action "health" || true ;;
         9) run_action "restart" || true ;;
         10) run_action "logs" || true ;;
-        11) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        11) run_action "config" || true ;;
+        12) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 

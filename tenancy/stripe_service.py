@@ -225,12 +225,39 @@ def confirm_subscription_payment(payment: SaaSPayment, new_status: str = "APROBA
     return payment
 
 
-def confirm_sandbox_payment(payment_id: int, user) -> SaaSPayment:
+def confirm_sandbox_payment(
+    payment_id: int | None = None,
+    user=None,
+    plan_id: int | None = None,
+    condo_id: int | None = None,
+) -> SaaSPayment:
     """Confirma de inmediato un pago en modo sandbox para pruebas ágiles."""
-    try:
-        payment = SaaSPayment.objects.select_related("condominium", "plan").get(id=payment_id)
-    except SaaSPayment.DoesNotExist:
-        raise NotFound("Registro de pago no encontrado.")
+    payment = None
+    if payment_id:
+        payment = SaaSPayment.objects.select_related("condominium", "plan").filter(id=payment_id).first()
+
+    if not payment and condo_id:
+        condo = Condominium.objects.filter(id=condo_id, is_active=True).first()
+        plan = SubscriptionPlan.objects.filter(id=plan_id, is_active=True).first() if plan_id else None
+        if not plan:
+            plan = SubscriptionPlan.objects.filter(is_active=True).order_by("order").first()
+        if condo and plan:
+            payment = SaaSPayment.objects.create(
+                condominium=condo,
+                plan=plan,
+                user=user if getattr(user, "is_authenticated", False) else None,
+                amount=plan.price_bob,
+                currency=getattr(settings, "STRIPE_CURRENCY", "bob").lower(),
+                provider="stripe",
+                status=SaaSPayment.Status.APROBADO,
+                payment_intent_id=f"pi_sandbox_{condo.id}_{uuid4().hex[:10]}",
+                idempotency_key=f"stripe-sandbox-direct-{condo.id}-{uuid4().hex[:8]}",
+                metadata={"sandbox": True, "direct_confirm": True},
+            )
+            return confirm_subscription_payment(payment, SaaSPayment.Status.APROBADO)
+
+    if not payment:
+        raise NotFound("Registro de pago o condominio no encontrado.")
 
     if payment.status == SaaSPayment.Status.APROBADO:
         return payment

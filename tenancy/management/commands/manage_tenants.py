@@ -45,7 +45,15 @@ class Command(BaseCommand):
         p_rename.add_argument("--name", required=True, help="Nuevo nombre (ej. 'Condominio Taji')")
         p_rename.add_argument("--slug", default=None, help="Nuevo slug (ej. 'condominio-taji')")
 
-        # 6. sync_default
+        # 6. create_condo
+        p_create = subparsers.add_parser("create_condo", help="Crea un nuevo condominio en la arquitectura SaaS")
+        p_create.add_argument("--name", required=True, help="Nombre del condominio (ej. 'Torres del Parque')")
+        p_create.add_argument("--slug", default=None, help="Slug único (opcional)")
+        p_create.add_argument("--address", default="", help="Dirección física")
+        p_create.add_argument("--units", type=int, default=100, help="Máximo de unidades")
+        p_create.add_argument("--residents", type=int, default=400, help="Máximo de residentes")
+
+        # 7. sync_default
         p_sync = subparsers.add_parser("sync_default", help="Vincula todos los usuarios huérfanos a un condominio predeterminado")
         p_sync.add_argument("--condo", default="1", help="ID o Slug del condominio de destino (por defecto ID 1)")
 
@@ -61,6 +69,8 @@ class Command(BaseCommand):
             self._handle_make_admin(options)
         elif cmd == "rename_condo":
             self._handle_rename_condo(options)
+        elif cmd == "create_condo":
+            self._handle_create_condo(options)
         elif cmd == "sync_default":
             self._handle_sync_default(options)
         else:
@@ -226,6 +236,32 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"[OK] Condominio [{condo.id}] renombrado: '{old_name}' -> '{condo.name}' (slug: '{condo.slug}')."
         ))
+
+    @transaction.atomic
+    def _handle_create_condo(self, options):
+        name = options["name"].strip()
+        slug = options.get("slug")
+        if not slug:
+            from django.utils.text import slugify
+            slug = slugify(name)
+        address = options.get("address", "")
+        units = options.get("units", 100)
+        residents = options.get("residents", 400)
+
+        condo, created = Condominium.objects.get_or_create(
+            slug=slug,
+            defaults={
+                "name": name,
+                "address": address,
+                "max_units": units,
+                "max_residents": residents,
+                "is_active": True,
+            },
+        )
+        if not created:
+            self.stdout.write(self.style.WARNING(f"El condominio con slug '{slug}' ya existe (ID: {condo.id}, Nombre: {condo.name})."))
+        else:
+            self.stdout.write(self.style.SUCCESS(f"[OK] Condominio '{condo.name}' creado exitosamente (ID: {condo.id}, slug: '{condo.slug}')."))
 
     @transaction.atomic
     def _handle_sync_default(self, options):
