@@ -533,6 +533,10 @@ server {
     location /static/ {
         alias /opt/taji/current/staticfiles/;
     }
+
+    location /taji/static/ {
+        alias /opt/taji/current/staticfiles/;
+    }
 }
 NGINX
 

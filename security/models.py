@@ -30,6 +30,14 @@ class VisitAuthorization(models.Model):
     valid_until = models.DateTimeField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.AUTHORIZED)
     qr_uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    # RF-09 / T021: identidad pública del QR actual y su expiración.
+    # `qr_token_hash` es el SHA-256 hexadecimal del token opaco contenido en el QR;
+    # nunca se persiste el token en claro, de modo que una filtración de la base de
+    # datos no permite clonar accesos. Es NULL mientras no se ha emitido un QR.
+    qr_token_hash = models.CharField(
+        max_length=64, unique=True, null=True, blank=True, editable=False
+    )
+    qr_issued_at = models.DateTimeField(null=True, blank=True)
     qr_expires_at = models.DateTimeField()
     cancelled_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
@@ -55,6 +63,37 @@ class VisitAuthorization(models.Model):
             models.Index(fields=("unit", "-valid_from"), name="idx_visit_unit_time"),
         ]
 
+    def is_qr_issued(self):
+        """True cuando ya se emitió un QR con token vigente para esta autorización."""
+        return bool(self.qr_token_hash and self.qr_issued_at)
+
+    def is_qr_active(self, at=None):
+        """
+        RF-09: el QR solo es utilizable si fue emitido, no expiró,
+        la autorización no está en estado terminal y la visita está dentro de su ventana.
+        """
+        moment = at or timezone.now()
+        if not self.is_qr_issued():
+            return False
+        if self.status in (
+            self.Status.CANCELLED,
+            self.Status.FINISHED,
+            self.Status.EXPIRED,
+        ):
+            return False
+        if self.qr_expires_at <= moment or self.valid_until <= moment:
+            return False
+        if self.valid_from > moment:
+            return False
+        return True
+
+    def qr_seconds_remaining(self, at=None):
+        """Segundos restantes de vigencia del QR; 0 si ya no es utilizable."""
+        if not self.is_qr_issued():
+            return 0
+        remaining = int((self.qr_expires_at - (at or timezone.now())).total_seconds())
+        return max(remaining, 0)
+
 
 class AccessEvent(models.Model):
     class Type(models.TextChoices):
@@ -75,9 +114,18 @@ class AccessEvent(models.Model):
     authorization = models.ForeignKey(
         VisitAuthorization, on_delete=models.PROTECT, related_name="access_events", null=True, blank=True
     )
+    unit = models.ForeignKey(
+        "condominiums.Unit",
+        on_delete=models.PROTECT,
+        related_name="access_events",
+        null=True,
+        blank=True,
+    )
     person = models.ForeignKey(
         "accounts.Person", on_delete=models.PROTECT, related_name="access_events", null=True, blank=True
     )
+    visitor_name = models.CharField(max_length=220, blank=True)
+    visitor_document_number = models.CharField(max_length=30, blank=True)
     guard_staff = models.ForeignKey(
         "condominiums.Staff",
         on_delete=models.SET_NULL,
