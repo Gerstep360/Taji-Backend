@@ -118,9 +118,18 @@ class AccessEvent(models.Model):
     authorization = models.ForeignKey(
         VisitAuthorization, on_delete=models.PROTECT, related_name="access_events", null=True, blank=True
     )
+    unit = models.ForeignKey(
+        "condominiums.Unit",
+        on_delete=models.PROTECT,
+        related_name="access_events",
+        null=True,
+        blank=True,
+    )
     person = models.ForeignKey(
         "accounts.Person", on_delete=models.PROTECT, related_name="access_events", null=True, blank=True
     )
+    visitor_name = models.CharField(max_length=220, blank=True)
+    visitor_document_number = models.CharField(max_length=30, blank=True)
     guard_staff = models.ForeignKey(
         "condominiums.Staff",
         on_delete=models.SET_NULL,

@@ -79,7 +79,10 @@ def _is_postgres_listening(host="127.0.0.1", port=5432):
 
 _env_db = env.db("DATABASE_URL", default="postgresql://postgres:root@localhost:5432/taji")
 
-if _env_db["ENGINE"] == "django.db.backends.postgresql" and not _is_postgres_listening():
+if _env_db["ENGINE"] == "django.db.backends.postgresql" and not _is_postgres_listening(
+    host=_env_db.get("HOST") or "127.0.0.1",
+    port=int(_env_db.get("PORT") or 5432),
+):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
