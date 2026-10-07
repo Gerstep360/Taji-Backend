@@ -44,6 +44,14 @@ class ShiftLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
         queryset = ShiftLogEntry.objects.exclude(entry_type=ShiftLogEntry.Type.HANDOVER_NOTE).select_related(
             "shift__guard_staff__person", "shift__condominium", "created_by_user"
         ).order_by("-occurred_at", "-id")
+
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        if tenant and not TenantContext.is_global():
+            queryset = queryset.filter(
+                Q(shift__condominium=tenant) | Q(shift__guard_staff__condominium=tenant)
+            )
+
         user = self.request.user
         if not is_admin_or_management(user):
             queryset = queryset.filter(shift__guard_staff__person_id=user.person_id)

@@ -75,17 +75,17 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
-    def get_guard_name(self, obj):
+    def get_guard_name(self, obj) -> str:
         if obj.guard_staff and obj.guard_staff.person:
             return obj.guard_staff.person.full_name
         return ""
 
-    def get_guard_employee_code(self, obj):
+    def get_guard_employee_code(self, obj) -> str:
         if obj.guard_staff:
             return obj.guard_staff.employee_code or ""
         return ""
 
-    def get_condominium_name(self, obj):
+    def get_condominium_name(self, obj) -> str:
         if obj.condominium:
             return obj.condominium.name
         return ""

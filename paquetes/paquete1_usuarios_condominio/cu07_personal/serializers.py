@@ -127,25 +127,25 @@ class StaffSerializer(serializers.ModelSerializer):
             "notes": {"allow_blank": True, "required": False},
         }
 
-    def get_has_system_access(self, obj):
+    def get_has_system_access(self, obj) -> bool:
         return hasattr(obj.person, "user") and obj.person.user is not None
 
-    def get_user_id(self, obj):
+    def get_user_id(self, obj) -> int | None:
         if hasattr(obj.person, "user") and obj.person.user is not None:
             return obj.person.user.id
         return None
 
-    def get_user_is_active(self, obj):
+    def get_user_is_active(self, obj) -> bool | None:
         if hasattr(obj.person, "user") and obj.person.user is not None:
             return obj.person.user.is_active
         return None
 
-    def get_role_slug(self, obj):
+    def get_role_slug(self, obj) -> str | None:
         if hasattr(obj.person, "user") and obj.person.user and obj.person.user.role:
             return obj.person.user.role.slug
         return None
 
-    def get_role_name(self, obj):
+    def get_role_name(self, obj) -> str | None:
         if hasattr(obj.person, "user") and obj.person.user and obj.person.user.role:
             return obj.person.user.role.name
         return None

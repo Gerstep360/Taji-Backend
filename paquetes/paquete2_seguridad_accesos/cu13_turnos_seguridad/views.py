@@ -69,6 +69,13 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
             "created_by_user",
         )
 
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        if tenant and not TenantContext.is_global():
+            queryset = queryset.filter(
+                Q(condominium=tenant) | Q(guard_staff__condominium=tenant)
+            )
+
         is_admin = is_admin_or_management(user)
 
         if not is_admin:
@@ -113,7 +120,17 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
         if not is_admin_or_management(user):
             raise PermissionDenied("Solo el administrador puede programar turnos de seguridad.")
 
-        shift = serializer.save(created_by_user=user)
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        save_kwargs = {"created_by_user": user}
+        if tenant and not TenantContext.is_global() and not serializer.validated_data.get("condominium"):
+            save_kwargs["condominium"] = tenant
+        elif not serializer.validated_data.get("condominium"):
+            guard_staff = serializer.validated_data.get("guard_staff")
+            if guard_staff and getattr(guard_staff, "condominium", None):
+                save_kwargs["condominium"] = guard_staff.condominium
+
+        shift = serializer.save(**save_kwargs)
         record_audit_event(
             action_code="SECURITY_SHIFT_CREATED",
             resource_type="SecurityShift",

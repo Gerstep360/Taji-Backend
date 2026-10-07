@@ -1,6 +1,7 @@
 from django.db.models import Q
 from django.utils import timezone
-from rest_framework import generics
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import generics, serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 
@@ -12,7 +13,35 @@ from ..cu08_visitantes.permissions import CanRegisterOrManageVisits
 from .services import consultation
 
 
+class VisitConsultationRowSerializer(serializers.Serializer):
+    """Representación documental de registros de visitas y accesos consultados."""
+    id = serializers.IntegerField(required=False)
+    visitor_name = serializers.CharField(required=False)
+    visitor_document_number = serializers.CharField(required=False)
+    unit_code = serializers.CharField(required=False)
+    status = serializers.CharField(required=False)
+
+
+@extend_schema(
+    tags=["Seguridad - Consultas Visitas"],
+    summary="Consultar visitas programadas, activas, dentro e histórico",
+    parameters=[
+        OpenApiParameter(
+            "section",
+            str,
+            default="expected",
+            description="Sección a consultar: expected, active, finished, inside o history.",
+        ),
+        OpenApiParameter(
+            "search",
+            str,
+            description="Búsqueda por nombre de visitante, documento o código de unidad.",
+        ),
+    ],
+    responses={200: VisitConsultationRowSerializer(many=True)},
+)
 class VisitConsultationView(generics.GenericAPIView):
+    serializer_class = VisitConsultationRowSerializer
     permission_classes = [IsAuthenticated, IsTenantMember, CanRegisterOrManageVisits | CanRegisterAccessEvents]
     action = "list"
 

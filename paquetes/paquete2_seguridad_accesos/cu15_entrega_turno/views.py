@@ -64,6 +64,15 @@ class HandoverViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
             "outgoing_shift__guard_staff__person", "incoming_shift__guard_staff__person",
             "outgoing_shift__condominium", "incoming_shift__condominium",
         ).order_by("-delivered_at", "-id")
+
+        from tenancy.context import TenantContext
+        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
+        if tenant and not TenantContext.is_global():
+            qs = qs.filter(
+                Q(outgoing_shift__condominium=tenant) | Q(incoming_shift__condominium=tenant)
+                | Q(outgoing_shift__guard_staff__condominium=tenant)
+            )
+
         user = self.request.user
         if not is_admin_or_management(user):
             qs = qs.filter(Q(outgoing_shift__guard_staff__person_id=user.person_id) |

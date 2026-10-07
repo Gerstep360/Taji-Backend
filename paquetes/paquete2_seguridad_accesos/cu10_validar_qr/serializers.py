@@ -41,6 +41,9 @@ class VisitQrValidationRequestSerializer(serializers.Serializer):
 class AccessEventSerializer(serializers.Serializer):
     """Identificador del evento de acceso registrado por el escaneo."""
 
+    class Meta:
+        ref_name = "QrAccessEvent"
+
     id = serializers.IntegerField(read_only=True)
     event_type = serializers.CharField(read_only=True)
     validation_method = serializers.CharField(read_only=True)
