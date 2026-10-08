@@ -57,8 +57,8 @@ animated_progress_bar() {
         step=$((step + 1))
         sleep 0.1
     done
-    wait "$pid"
-    local exit_code=$?
+    local exit_code=0
+    wait "$pid" || exit_code=$?
     
     local full_bar=""
     for ((i=0; i<width; i++)); do full_bar="${full_bar}#"; done
@@ -172,13 +172,14 @@ resolve_domain() {
 # `/etc/taji/backend.env` por su cuenta, asi que `DATABASE_URL` y `BACKUP_DIR`
 # llegan solos y sin el problema de `source` descrito arriba.
 run_backup_cli() {
+    local backup_release=${TAJI_BACKUP_RELEASE:-$ROOT/current}
     [[ -f $ENV_FILE ]] || fail "No existe $ENV_FILE. Ejecuta la opcion [1] primero."
-    [[ -d $ROOT/current ]] || fail "No existe /opt/taji/current. Ejecuta la opcion [1] primero."
+    [[ -d $backup_release ]] || fail "No existe el release para ejecutar el respaldo. Ejecuta la opcion [1] primero."
 
     install -d -m 0700 -o taji -g taji "$(resolve_backup_dir)"
 
-    (cd "$ROOT/current" && runuser -u taji --preserve-environment -- \
-        "$ROOT/current/.venv/bin/python" deploy/backup_database.py --settings=config.settings_production "$@")
+    (cd "$backup_release" && runuser -u taji --preserve-environment -- \
+        "$backup_release/.venv/bin/python" deploy/backup_database.py --settings=config.settings_production "$@")
 }
 
 do_backup() {
@@ -587,19 +588,21 @@ do_deploy_backend() {
     #
     # Una migración es el único paso del despliegue capaz de destruir datos de
     # forma irreversible, asi que se guarda una copia verificada justo antes. Se
-    # usa el env de la version *anterior* (todavia activa) y el backup mas
-    # reciente como red de seguridad: si el respaldo falla, la migracion se
-    # detiene en vez de seguir a ciegas.
-    # Se reutiliza `run_backup_cli`, que ya resuelve el directorio, el env y la
-    # ejecucion como usuario `taji`. Invocar el script directamente desde aqui
-    # fallaba: la ruta `deploy/backup_database.py` es relativa y se resolvia
-    # contra el directorio desde el que se lanzo el menu (el clon de git del
-    # operador), que pertenece a root, asi que `taji` recibia "Permission denied".
+    # Se utiliza el release preparado y el env del servidor, antes de modificar
+    # la base. run_backup_cli resuelve el directorio y ejecuta como usuario taji.
+    # Si el respaldo falla, se detiene el despliegue sin ejecutar migraciones.
     PREMIGRATION_BACKUP=""
     local pre_migrate_marker
     pre_migrate_marker=$(mktemp /tmp/taji-premigrate-marker.XXXXXX)
-    (run_backup_cli create --prefix premigrate) >/tmp/taji-premigrate-backup.log 2>&1 &
-    animated_progress_bar $! "Respaldando PostgreSQL antes de migrar"
+    # En una primera instalación todavía no existe current. El release nuevo
+    # ya está preparado, pero la base aún NO ha sido migrada: se respalda igual.
+    (TAJI_BACKUP_RELEASE="$RELEASE" run_backup_cli create --prefix premigrate) >/tmp/taji-premigrate-backup.log 2>&1 &
+    local backup_pid=$!
+    if ! animated_progress_bar "$backup_pid" "Respaldando PostgreSQL antes de migrar"; then
+        cat /tmp/taji-premigrate-backup.log 2>/dev/null || true
+        rm -f "$pre_migrate_marker"
+        fail "No se pudo respaldar la base antes de migrar. Deteniendo el despliegue para no arriesgar los datos."
+    fi
     # Solo cuenta un dump creado en ESTE intento. Tomar el mas reciente sin mas
     # daria por bueno el respaldo de un despliegue anterior si este fallara:
     # la migracion avanzaria sin copia que la respalde.
