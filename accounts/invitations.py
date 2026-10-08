@@ -32,10 +32,11 @@ from dataclasses import dataclass
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+
+from accounts.tokens import token_generator
 
 logger = logging.getLogger("taji.accounts.invitations")
 
@@ -81,7 +82,7 @@ def generate_temporary_password(length: int = TEMP_PASSWORD_LENGTH) -> str:
 def build_activation_url(user) -> str:
     """Enlace de un solo uso para que el interesado elija su contraseña."""
     uid = urlsafe_base64_encode(force_bytes(user.pk))
-    token = default_token_generator.make_token(user)
+    token = token_generator.make_token(user)
     base = getattr(settings, "PASSWORD_RESET_URL", "")
     return f"{base}?{urlencode({'uid': uid, 'token': token, 'invite': '1'})}"
 

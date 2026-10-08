@@ -84,11 +84,12 @@ Si hay commits nuevos:
    publicada. Conserva versiones anteriores y respaldos.
 
 La actualización es manual; no se instala un cron que publique cambios sin
-supervisión. Hay un bloqueo para impedir despliegues simultáneos y se rechaza
-una reescritura de `main`. Los cambios de dependencias usan un venv nuevo; los
-de esquema pasan por migraciones. Para cambios en la configuración de Nginx,
-systemd o paquetes del sistema, vuelve a ejecutar `install` desde el script
-actualizado con el mismo dominio, correo y origen. Esto conserva la base y
+supervisión. Lo único automático es el **respaldo** diario, que no despliega
+código (ver «Respaldos»). Hay un bloqueo para impedir despliegues simultáneos y
+se rechaza una reescritura de `main`. Los cambios de dependencias usan un venv
+nuevo; los de esquema pasan por migraciones. Para cambios en la configuración de
+Nginx, systemd o paquetes del sistema, vuelve a ejecutar `install` desde el
+script actualizado con el mismo dominio, correo y origen. Esto conserva la base y
 los secretos existentes. No cambies de dominio mediante una reinstalación:
 ajusta también `ALLOWED_HOSTS` y los orígenes en la configuración.
 
@@ -160,12 +161,95 @@ autenticación, quita los espacios de `EMAIL_HOST_PASSWORD`.
 - Certbot instala la renovación programada del certificado; el hook recarga
   Nginx después de renovar. Verifica con `sudo certbot renew --dry-run`.
 
+## Respaldos
+
+Taji usa **una sola base de datos PostgreSQL compartida** entre todos los
+condominios: el aislamiento entre tenants es a nivel de ORM
+(`TenantAwareManager` filtra por `condominium_id`), no una base por condominio.
+Por eso un único `pg_dump` de `taji` **incluye todos los tenants** y no hace
+falta `pg_dumpall` (que solo añadiría los roles globales de PostgreSQL).
+
+Los respaldos quedan en `/var/backups/taji/` (configurable con `BACKUP_DIR` en
+`/etc/taji/backend.env`) en formato `custom`, que ya viene comprimido.
+
+Cada respaldo se **verifica antes de darse por bueno**: el volcado se escribe en
+un `.dump.partial` y solo se renombra a `.dump` tras pasar `pg_restore --list`.
+Un respaldo fallido nunca se presenta como utilizable.
+
+### Manuales
+
+Desde el menú del instalador:
+
+```
+sudo ./deploy/vps.sh
+# Opción [7]  Respaldo manual (verificado)
+# Opción [13] Respaldos: listar / verificar / restaurar
+```
+
+O directamente:
+
+```bash
+sudo bash deploy/vps.sh backup
+```
+
+### Automáticos
+
+El menú ofrece la **opción [14]**, que instala un `systemd timer`
+(`taji-backup.timer`) con ejecución diaria a la hora que elijas. Se eligió un
+timer y no un cron porque es el mismo mecanismo que ya usa el instalador para
+`taji.service`, no depende del paquete `cron` y lleva `Persistent=true`, que
+ejecuta el respaldo pendiente si el servidor estaba apagado a la hora.
+
+```bash
+systemctl list-timers taji-backup.timer
+systemctl start taji-backup.service   # ejecutar uno ahora
+journalctl -u taji-backup.service -n 30 --no-pager
+sudo bash deploy/vps.sh backup-schedule off   # desactivar
+```
+
+La automatización cubre solo los **respaldos**, no los despliegues: publicar
+cambios sigue siendo una operación manual y supervisada.
+
+### Antes de cada migración
+
+`taji-deploy update` genera y verifica un respaldo `premigrate-*.dump` antes de
+aplicar `migrate`. Es el único paso del despliegue capaz de destruir datos de
+forma irreversible. **Si el respaldo falla, el despliegue se detiene** en vez de
+seguir adelante a ciegas.
+
+### Retención
+
+Por defecto se conservan los respaldos de los últimos **14 días** y siempre las
+**10 copias más recientes** (el piso manda: si el servidor lleva mucho sin
+generar copias, nunca se queda sin respaldo reciente). Los `.dump.partial` en
+curso nunca se listan.
+
+```bash
+python deploy/backup_database.py create --keep-days 30 --keep-count 20
+```
+
+### Verificar y restaurar
+
+```bash
+sudo python deploy/backup_database.py list
+sudo python deploy/backup_database.py verify /var/backups/taji/taji-20261008T033000123456Z.dump
+sudo python deploy/backup_database.py restore /var/backups/taji/taji-....dump \
+  --target-db taji_restaurado
+```
+
+La restauración **se niega a sobrescribir la base en uso**: exige un
+`--target-db` distinto y crea esa base si no existe. Poner la aplicación en
+servicio es un paso manual posterior:
+
+1. Compara la base restaurada con el commit correspondiente.
+2. Ajusta `DATABASE_URL` en `/etc/taji/backend.env` a la base restaurada.
+3. `sudo systemctl restart taji`.
+
 ## Fallos y recuperación
 
-Los respaldos quedan en `/var/backups/taji/`: `.dump`, `.env` y `.media.tar.gz`.
 El archivo `.release-sha` de cada versión identifica el commit. Los respaldos
-incluyen datos y secretos: consérvalos fuera del repositorio, copia periódicamente
-a almacenamiento privado y define tu retención; el script no los elimina.
+incluyen datos y secretos: consérvalos fuera del repositorio y cópialos
+periódicamente a almacenamiento privado.
 
 Si falla la preparación, la versión activa continúa funcionando. Una vez
 detenido el servicio, cualquier fallo (incluyendo la comprobación HTTPS) lo
@@ -173,22 +257,25 @@ deja detenido para evitar ejecutar código con un esquema parcialmente migrado.
 Lee `journalctl -u taji` y la salida del despliegue. Una migración correctiva
 puede publicarse y aplicarse con `sudo taji-deploy update`.
 
-No basta con volver a apuntar el código antiguo si cambió el esquema. Para
-restaurar un respaldo, detén la aplicación, conserva la base fallida para
-diagnóstico y restaura el `.dump` en otra base vacía con `pg_restore`. Comprueba
-esa base con el commit correspondiente, configura su conexión y restaura los
-archivos subidos del mismo respaldo. Esto requiere adaptar la conexión del
-script, que por defecto solo actualiza la base local `taji`.
+No basta con volver a apuntar el código antiguo si cambió el esquema: una
+migración puede haber destruido datos. Restaura sobre una base nueva con
+`backup_database.py restore` y comprueba esa base antes de ponerla en servicio.
 
 ## Respaldo y migración local en Windows
 
 La conexión sale de `Backend/.env`. No publiques ese archivo ni los respaldos.
 
 ```powershell
-.venv/Scripts/python.exe deploy/backup_database.py --pg-bin 'C:\Program Files\PostgreSQL\18\bin'
+# Sin subcomando equivale a `create`.
+.venv/Scripts/python.exe deploy/backup_database.py create --pg-bin 'C:\Program Files\PostgreSQL\18\bin'
+.venv/Scripts/python.exe deploy/backup_database.py list
 .venv/Scripts/python.exe manage.py migrate --plan
 .venv/Scripts/python.exe manage.py migrate
 ```
+
+En local los respaldos van a `Backend/backups/` salvo que se indique
+`--output-dir`. Fuera de PostgreSQL, el mismo comando sirve para verificar o
+restaurar:
 
 Para verificar la aplicación usa PostgreSQL: la suite heredada contiene una
 prueba que exige ese motor. Django crea y elimina una base de pruebas separada.

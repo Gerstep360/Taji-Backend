@@ -32,3 +32,7 @@ CACHES = {"default": {
     "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
     "LOCATION": env("CACHE_DIR", default="/var/cache/taji"),
 }}
+# Where `deploy/backup_database.py` writes the dumps. Read from the same env file
+# as the database so a manual backup, the systemd timer and the pre-migration
+# backup in `vps.sh` always land in the same place.
+BACKUP_DIR = env("BACKUP_DIR", default="/var/backups/taji")

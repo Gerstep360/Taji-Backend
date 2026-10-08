@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
@@ -19,6 +20,7 @@ from config.api import TajiPageNumberPagination
 from condominiums.models import Resident, ResidentUnit, Unit
 from .models import LoginAttempt, Person, Role, SystemPermission, User
 from .rbac import ROLE_DEFINITIONS
+from .tokens import token_generator
 
 
 PASSWORD = "TajiSeguro2026!"
@@ -698,3 +700,259 @@ class TemporaryPasswordChangeTests(APITestCase):
         self.assertTrue(BlacklistedToken.objects.filter(token=outstanding).exists())
         with self.assertRaises(TokenError):
             RefreshToken(str(other_refresh))
+
+
+class ActivationTokenSurvivesLoginTests(APITestCase):
+    """
+    El enlace de activación debe seguir valiendo después de un inicio de sesión.
+
+    Es el orden que se da en la práctica: el correo trae contraseña temporal y
+    enlace, el residente prueba la clave, entra, y al pulsar el enlace se le
+    decía que estaba expirado. La causa era `last_login` dentro del hash del
+    token de Django.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="orden@example.com",
+            password="Temporal2026!",
+            first_name="Orden",
+            last_name="Probado",
+            role=Role.objects.get(slug="residente"),
+            must_change_password=True,
+        )
+
+    def test_login_does_not_invalidate_the_activation_link(self):
+        token = token_generator.make_token(self.user)
+
+        self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "orden@example.com", "password": "Temporal2026!", "client": "web"},
+            format="json",
+        )
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.last_login)
+
+        self.assertTrue(token_generator.check_token(self.user, token))
+
+    def test_changing_the_password_does_invalidate_the_link(self):
+        """Sigue siendo de un solo uso: lo que mata el token es el cambio."""
+        token = token_generator.make_token(self.user)
+
+        self.user.set_password("OtraClaveSegura2026!")
+        self.user.save(update_fields=["password"])
+
+        self.assertFalse(token_generator.check_token(self.user, token))
+
+    def test_the_link_works_end_to_end_after_a_login(self):
+        token = token_generator.make_token(self.user)
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+
+        self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "orden@example.com", "password": "Temporal2026!", "client": "web"},
+            format="json",
+        )
+
+        response = self.client.post(
+            "/api/v1/auth/reset-password/",
+            {
+                "uid": uid,
+                "token": token,
+                "password": "ClaveDefinitiva2026!",
+                "password_confirm": "ClaveDefinitiva2026!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.must_change_password)
+        self.assertTrue(self.user.check_password("ClaveDefinitiva2026!"))
+
+    def test_forgot_password_link_survives_login_too(self):
+        """El mismo token_generator sirve para recuperación de contraseña."""
+        token = token_generator.make_token(self.user)
+
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=["last_login"])
+
+        self.assertTrue(token_generator.check_token(self.user, token))
+
+    def test_a_token_made_with_the_default_generator_is_rejected(self):
+        """
+        Para un usuario que ya inició sesión alguna vez, los dos generadores
+        calculan hashes distintos y el token viejo deja de validar.
+
+        Para uno que nunca inició sesión los hashes coinciden (`last_login` es
+        NULL en ambos casos), lo cual es lo deseable: los enlaces de invitación
+        ya emitidos siguen funcionando en lugar de romperse.
+        """
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=["last_login"])
+
+        token = default_token_generator.make_token(self.user)
+
+        self.assertFalse(token_generator.check_token(self.user, token))
+
+    def test_pending_invitation_links_survive_the_generator_change(self):
+        """Un residente que nunca ha entrado conserva su enlace ya emitido."""
+        self.assertIsNone(self.user.last_login)
+
+        token = default_token_generator.make_token(self.user)
+
+        self.assertTrue(token_generator.check_token(self.user, token))
+
+
+class SessionRevocationQueryBudgetTests(APITestCase):
+    """
+    Revocar sesiones no debe crecer con el número de sesiones del usuario.
+
+    Con `ROTATE_REFRESH_TOKENS` se crea una fila `OutstandingToken` por cada
+    renovación, así que el usuario activo acumula cientos. La versión anterior
+    usaba `get_or_create` en un bucle (1 + 2N consultas) y agotaba el timeout
+    del worker. Aquí se fija el techo para que no vuelva a colarse.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="muchas-sesiones@example.com",
+            password=PASSWORD,
+            first_name="Muchas",
+            last_name="Sesiones",
+            role=Role.objects.get(slug="residente"),
+        )
+
+    def test_revoking_sessions_uses_a_constant_number_of_queries(self):
+        from paquetes.paquete1_usuarios_condominio.cu01_autenticacion.views import (
+            revoke_all_sessions,
+        )
+
+        for _ in range(50):
+            RefreshToken.for_user(self.user)
+
+        with self.assertNumQueries(2):
+            revoked = revoke_all_sessions(self.user)
+
+        self.assertEqual(revoked, 50)
+
+    def test_revoking_sessions_is_idempotent(self):
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+
+        from paquetes.paquete1_usuarios_condominio.cu01_autenticacion.views import (
+            revoke_all_sessions,
+        )
+
+        RefreshToken.for_user(self.user)
+
+        # La segunda pasada no debe fallar por la restricción de unicidad de la
+        # lista negra: `ignore_conflicts` lo resuelve sin consultar antes.
+        revoke_all_sessions(self.user)
+        self.assertEqual(BlacklistedToken.objects.count(), 1)
+        revoke_all_sessions(self.user)
+        self.assertEqual(BlacklistedToken.objects.count(), 1)
+
+    def test_keep_jti_preserves_the_current_session(self):
+        from rest_framework_simplejwt.exceptions import TokenError
+
+        from paquetes.paquete1_usuarios_condominio.cu01_autenticacion.views import (
+            revoke_all_sessions,
+        )
+
+        keep = str(RefreshToken.for_user(self.user))
+        drop = str(RefreshToken.for_user(self.user))
+
+        revoke_all_sessions(self.user, keep_jti=RefreshToken(keep)["jti"])
+
+        # La sesión conservada sigue sirviendo; la otra ya no.
+        RefreshToken(keep)
+        with self.assertRaises(TokenError):
+            RefreshToken(drop)
+
+
+class ChangePasswordSessionSurvivalTests(APITestCase):
+    """
+    Cambiar la contraseña no debe expulsar al propio usuario.
+
+    La sesión se identifica por su refresh token. La versión anterior leía el
+    `jti` del header `Authorization` (el del access token), que nunca coincide
+    con `OutstandingToken.jti` (el del refresh): el `exclude` no excluía nada
+    y la cuenta se quedaba sin ninguna sesión válida justo después de cambiar
+    la clave.
+    """
+
+    CHANGE_URL = "/api/v1/auth/change-password/"
+    TEMPORARY = "Temporal2026!"
+    NEW_PASSWORD = "NuevaClaveSegura2026!"
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="superviviente@example.com",
+            password=self.TEMPORARY,
+            first_name="Sesión",
+            last_name="Activa",
+            role=Role.objects.get(slug="residente"),
+            must_change_password=True,
+        )
+        self.keep = str(RefreshToken.for_user(self.user))
+        self.other = str(RefreshToken.for_user(self.user))
+        self.access = str(RefreshToken(self.keep).access_token)
+
+    def change(self, **extra):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access}")
+        payload = {
+            "current_password": self.TEMPORARY,
+            "password": self.NEW_PASSWORD,
+            "password_confirm": self.NEW_PASSWORD,
+        }
+        payload.update(extra)
+        response = self.client.post(self.CHANGE_URL, payload, format="json")
+        self.client.credentials()
+        return response
+
+    def test_the_session_that_changed_the_password_survives(self):
+        from rest_framework_simplejwt.exceptions import TokenError
+
+        response = self.change(refresh_token=self.keep)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Sobrevivió.
+        RefreshToken(self.keep)
+        # Pero la otra sesión quedó invalidada.
+        with self.assertRaises(TokenError):
+            RefreshToken(self.other)
+
+    def test_without_a_refresh_token_all_sessions_are_revoked(self):
+        """Sin poder identificar la sesión, es preferible revocar todas."""
+        from rest_framework_simplejwt.exceptions import TokenError
+
+        self.change()
+
+        with self.assertRaises(TokenError):
+            RefreshToken(self.keep)
+        with self.assertRaises(TokenError):
+            RefreshToken(self.other)
+
+    def test_web_cookie_session_survives(self):
+        """En web el refresh viaja en la cookie HttpOnly."""
+        from rest_framework_simplejwt.exceptions import TokenError
+
+        self.client.cookies[settings.AUTH_COOKIE_REFRESH] = self.keep
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access}")
+
+        response = self.client.post(
+            self.CHANGE_URL,
+            {
+                "current_password": self.TEMPORARY,
+                "password": self.NEW_PASSWORD,
+                "password_confirm": self.NEW_PASSWORD,
+            },
+            format="json",
+        )
+        self.client.credentials()
+        self.client.cookies.clear()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        RefreshToken(self.keep)
+        with self.assertRaises(TokenError):
+            RefreshToken(self.other)
