@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
 from math import ceil
 from typing import Any
@@ -52,6 +53,12 @@ def taji_exception_handler(exc: Exception, context: dict[str, Any]) -> Response 
         exc = ValidationError(detail)
 
     response = drf_exception_handler(exc, context)
+    # Identificador que correlaciona la respuesta con su linea en el log. Solo se
+    # genera para fallos que no son de negocio (503/500), donde el traceback del
+    # log es la unica pista real.
+    diagnostics: dict[str, str] = {}
+    request = context.get("request")
+
     if response is None:
         if isinstance(exc, IntegrityError):
             response = Response(status=status.HTTP_409_CONFLICT)
@@ -60,18 +67,42 @@ def taji_exception_handler(exc: Exception, context: dict[str, Any]) -> Response 
             # Se registra el traceback: sin esto, errores de esquema (por ejemplo
             # un valor que excede el max_length de una columna) se reportaban
             # como un 503 genérico sin dejar rastro en el log.
-            logger.exception(
-                "Error de base de datos en la API",
+            #
+            # El `trace_id` aparece tambien en la respuesta: una peticion fallida
+            # en pantalla no dice cual de varias fue, y sin esto obliga a adivinar
+            # entre varias lineas del log.
+            trace_id = uuid.uuid4().hex[:12]
+            diagnostics = {
+                "trace_id": trace_id,
+                # Nombre de la excepcion, no su mensaje: el mensaje puede traer
+                # fragmentos de SQL, y con esto el tipo ya orienta la busqueda.
+                "exception": type(exc).__name__,
+            }
+            logger.error(
+                "Error de base de datos en la API [trace_id=%s] %s %s -> %s",
+                trace_id,
+                getattr(request, "method", "?"),
+                getattr(request, "path", "?"),
+                diagnostics["exception"],
                 exc_info=(type(exc), exc, exc.__traceback__),
-                extra={"view": context.get("view")},
+                extra={"view": context.get("view"), "trace_id": trace_id},
             )
             response = Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
             raw_detail = "La base de datos no está disponible temporalmente."
         else:
-            logger.exception(
-                "Error no controlado en la API",
+            trace_id = uuid.uuid4().hex[:12]
+            diagnostics = {
+                "trace_id": trace_id,
+                "exception": type(exc).__name__,
+            }
+            logger.error(
+                "Error no controlado en la API [trace_id=%s] %s %s -> %s",
+                trace_id,
+                getattr(request, "method", "?"),
+                getattr(request, "path", "?"),
+                diagnostics["exception"],
                 exc_info=(type(exc), exc, exc.__traceback__),
-                extra={"view": context.get("view")},
+                extra={"view": context.get("view"), "trace_id": trace_id},
             )
             response = Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             raw_detail = "Ocurrió un error interno. Intenta nuevamente."
@@ -89,6 +120,10 @@ def taji_exception_handler(exc: Exception, context: dict[str, Any]) -> Response 
     }
     if fields:
         payload["error"]["fields"] = fields
+    # Solo en fallos no controlados: un 400 de negocio no lleva `trace_id` porque
+    # no hay nada que rastrear en el log.
+    if diagnostics:
+        payload["error"].update(diagnostics)
     response.data = payload
     response.content_type = "application/json"
     return response
