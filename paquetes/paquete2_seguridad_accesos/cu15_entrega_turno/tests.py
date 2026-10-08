@@ -5,6 +5,7 @@ from accounts.models import Person, Role, User
 from auditlog.models import AuditEvent
 from condominiums.models import Condominium, Staff
 from security.models import SecurityShift, ShiftHandover, ShiftLogEntry
+from tenancy.models import TenantMembership
 
 
 class HandoverTests(APITestCase):
@@ -22,9 +23,12 @@ class HandoverTests(APITestCase):
             person = Person.objects.create(first_name=f"Guardia {index}", last_name="Prueba", document_number=str(index))
             user = User.objects.create_user(email=f"g{index}@test.com", password="Test12345!", person=person, role=role, is_approved=True)
             cls.guards.append(user)
-            cls.staff.append(Staff.objects.create(person=person, staff_type="SECURITY", status="ACTIVE"))
+            cls.staff.append(Staff.objects.create(person=person, condominium=cls.condo, staff_type="SECURITY", status="ACTIVE"))
+            TenantMembership.objects.create(user=user, condominium=cls.condo, role=role, is_default=True)
         cls.admin = User.objects.create_user(email="admin@test.com", password="Test12345!", role=admin_role, is_approved=True)
         cls.resident = User.objects.create_user(email="resident@test.com", password="Test12345!", role=resident_role, is_approved=True)
+        for user in (cls.admin, cls.resident):
+            TenantMembership.objects.create(user=user, condominium=cls.condo, role=user.role, is_default=True)
         end = timezone.now() + timedelta(minutes=1)
         cls.outgoing = SecurityShift.objects.create(guard_staff=cls.staff[0], condominium=cls.condo,
             scheduled_start=end-timedelta(hours=8), scheduled_end=end, status="OPEN", opened_at=end-timedelta(hours=8))
@@ -72,7 +76,7 @@ class HandoverTests(APITestCase):
         self.incoming.condominium = self.other_condo; self.incoming.save(); self.login()
         self.assertEqual(self.client.post(self.url, self.payload(), format="json").status_code, 400)
         self.outgoing.condominium = None; self.outgoing.save()
-        self.assertEqual(self.client.get(self.url+"candidatos/", {"outgoing_shift": self.outgoing.pk}).status_code, 400)
+        self.assertEqual(self.client.get(self.url+"candidatos/", {"outgoing_shift": self.outgoing.pk}).status_code, 404)
     def test_same_guard_and_inactive_guard_are_not_relay_candidates(self):
         self.incoming.guard_staff = self.staff[0]; self.incoming.save(); self.login()
         self.assertEqual(self.client.post(self.url, self.payload(), format="json").status_code, 400)

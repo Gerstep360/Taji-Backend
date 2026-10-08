@@ -3,7 +3,8 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import Person, Role, SystemPermission, User
-from condominiums.models import Staff
+from condominiums.models import Condominium, Staff
+from tenancy.models import TenantMembership
 from security.models import SecurityShift
 
 
@@ -284,6 +285,9 @@ class CU07StaffSystemAccessTests(APITestCase):
 
 
     def test_17_18_security_user_can_authenticate_and_access_cu13(self):
+        condo = Condominium.objects.create(name="Condominio del administrador")
+        TenantMembership.objects.create(user=self.admin_user, condominium=condo,
+            role=self.admin_role, is_default=True)
         payload = {
             "first_name": "Guardia",
             "last_name": "Ejecutor",
@@ -298,6 +302,10 @@ class CU07StaffSystemAccessTests(APITestCase):
 
         guard_user = User.objects.get(email="guardia@taji.com")
         self.assertTrue(guard_user.check_password("GuardiaPassword123!"))
+        self.assertEqual(Staff.objects.get(person=guard_user.person).condominium_id, condo.pk)
+        membership = TenantMembership.objects.get(user=guard_user, condominium=condo)
+        self.assertEqual(membership.role, self.security_role)
+        self.assertTrue(membership.is_active)
 
         # Authenticate as guard and call CU13 endpoint
         self.client.force_authenticate(user=guard_user)

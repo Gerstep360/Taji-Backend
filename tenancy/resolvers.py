@@ -51,7 +51,7 @@ class TenantResolver:
         # 2. Usuario autenticado (incluye superusuarios con membresías de condominio)
         if is_authenticated:
             active_memberships = TenantMembership.objects.filter(
-                user=user, is_active=True
+                user=user, is_active=True, condominium__is_active=True
             ).select_related("condominium", "role")
 
             # A. El usuario solicitó explícitamente un tenant vía header o query param
@@ -97,7 +97,7 @@ class TenantResolver:
                 return None, None, True
 
             # E. Usuario regular sin membresías
-            return None, None, True
+            return None, None, False
 
         # 4. Fallback retrocompatible para peticiones no autenticadas o usuarios de prueba sin membresía explícita
         if requested_identifier:

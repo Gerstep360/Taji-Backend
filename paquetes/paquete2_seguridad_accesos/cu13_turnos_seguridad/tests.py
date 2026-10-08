@@ -11,6 +11,7 @@ from accounts.models import Person, Role, SystemPermission, User
 from auditlog.models import AuditEvent
 from condominiums.models import Condominium, Staff
 from security.models import SecurityShift
+from tenancy.models import TenantMembership
 
 
 class CU13SecurityShiftTestCase(APITestCase):
@@ -123,6 +124,14 @@ class CU13SecurityShiftTestCase(APITestCase):
             is_approved=True,
         )
 
+        for user in (cls.user_admin, cls.user_guard1, cls.user_guard2, cls.user_resident):
+            TenantMembership.objects.create(user=user, condominium=cls.condo1, role=user.role, is_default=True)
+        Staff.objects.filter(pk__in=[cls.staff_guard1.pk, cls.staff_guard2.pk, cls.staff_maint.pk]).update(condominium=cls.condo1)
+
+    def make_shift(self, **kwargs):
+        kwargs.setdefault("condominium", self.condo1)
+        return SecurityShift.objects.create(**kwargs)
+
     def test_01_admin_creates_valid_shift(self):
         """1. Administrador crea un turno válido para personal de seguridad."""
         self.client.force_authenticate(user=self.user_admin)
@@ -146,7 +155,7 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_assigns_current_condominium_when_omitted_or_null(self):
         self.client.force_authenticate(user=self.user_admin)
-        current = Condominium.objects.filter(is_active=True).first()
+        current = self.condo1
         for offset, extra in enumerate(({}, {"condominium": None})):
             with self.subTest(extra=extra):
                 start = timezone.now() + timedelta(days=offset + 1)
@@ -168,8 +177,7 @@ class CU13SecurityShiftTestCase(APITestCase):
             "scheduled_start": start.isoformat(),
             "scheduled_end": (start + timedelta(hours=1)).isoformat(),
         }, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("condominium", response.data["error"]["fields"])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertFalse(SecurityShift.objects.exists())
 
     def test_02_reject_non_security_staff(self):
@@ -215,7 +223,7 @@ class CU13SecurityShiftTestCase(APITestCase):
         end1 = now + timedelta(days=2, hours=16)
 
         # Crear turno previo 08:00 - 16:00
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             condominium=self.condo1,
             scheduled_start=start1,
@@ -245,7 +253,7 @@ class CU13SecurityShiftTestCase(APITestCase):
         start1 = now + timedelta(days=3, hours=8)
         end1 = now + timedelta(days=3, hours=16)
 
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             condominium=self.condo1,
             scheduled_start=start1,
@@ -271,12 +279,12 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_06_admin_list_all_shifts(self):
         """6. Listado administrativo global de turnos."""
         now = timezone.now()
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
         )
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard2,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
@@ -293,12 +301,12 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_07_guard_list_own_shifts(self):
         """7. Listado propio del guardia (solo ve sus turnos asignados)."""
         now = timezone.now()
-        shift1 = SecurityShift.objects.create(
+        shift1 = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
         )
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard2,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
@@ -316,7 +324,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_08_shift_detail(self):
         """8. Detalle del turno."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
@@ -332,7 +340,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_09_edit_scheduled_shift(self):
         """9. Edición de turno programado por parte del administrador."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
@@ -351,7 +359,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_10_cancel_shift(self):
         """10. Cancelar turno programado (Administrador)."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
@@ -368,7 +376,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_11_start_shift_successfully(self):
         """11. Iniciar turno correctamente por el guardia asignado."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(minutes=5),
             scheduled_end=now + timedelta(hours=8),
@@ -388,7 +396,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_12_prevent_start_shift_by_other_guard(self):
         """12. Impedir que un guardia inicie el turno de otro guardia."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now,
             scheduled_end=now + timedelta(hours=8),
@@ -404,7 +412,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_13_prevent_start_cancelled_shift(self):
         """13. Impedir iniciar un turno en estado CANCELADO."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now,
             scheduled_end=now + timedelta(hours=8),
@@ -420,7 +428,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_14_prevent_starting_twice(self):
         """14. Impedir iniciar dos veces el mismo turno."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(hours=1),
             scheduled_end=now + timedelta(hours=7),
@@ -437,7 +445,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_15_close_shift_successfully(self):
         """15. Cerrar turno correctamente cambiando estado a FINALIZADO (CLOSED)."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(hours=8),
             scheduled_end=now,
@@ -458,7 +466,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_16_prevent_closing_unstarted_shift(self):
         """16. Impedir cerrar un turno no iniciado (SCHEDULED)."""
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now,
             scheduled_end=now + timedelta(hours=8),
@@ -483,7 +491,7 @@ class CU13SecurityShiftTestCase(APITestCase):
 
         # B) Caso con turno en curso:
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(hours=1),
             scheduled_end=now + timedelta(hours=7),
@@ -497,7 +505,7 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_18_upcoming_shifts_endpoint(self):
         """18. Consulta de próximos turnos programados."""
         now = timezone.now()
-        shift_future = SecurityShift.objects.create(
+        shift_future = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
@@ -516,13 +524,13 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_19_history_shifts_endpoint(self):
         """19. Consulta de historial de turnos (finalizados y cancelados) con filtros."""
         now = timezone.now()
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(days=2),
             scheduled_end=now - timedelta(days=2, hours=-8),
             status=SecurityShift.Status.CLOSED,
         )
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(days=1),
             scheduled_end=now - timedelta(days=1, hours=-8),
@@ -549,13 +557,13 @@ class CU13SecurityShiftTestCase(APITestCase):
     def test_21_condominium_isolation_and_filters(self):
         """21. Aislamiento y filtrado de turnos por condominio o guardia."""
         now = timezone.now()
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             condominium=self.condo1,
             scheduled_start=now + timedelta(days=1),
             scheduled_end=now + timedelta(days=1, hours=8),
         )
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard2,
             condominium=self.condo2,
             scheduled_start=now + timedelta(days=1),
@@ -604,7 +612,7 @@ class CU13SecurityShiftTestCase(APITestCase):
             (end + timedelta(hours=1), False),
         ]:
             with self.subTest(moment=moment):
-                shift = SecurityShift.objects.create(
+                shift = self.make_shift(
                     guard_staff=self.staff_guard1,
                     scheduled_start=start, scheduled_end=end,
                 )
@@ -618,7 +626,7 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_admin_cannot_bypass_start_window(self):
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(hours=1),
             scheduled_end=now + timedelta(hours=9),
@@ -630,13 +638,13 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_open_shift_blocks_same_guard_but_not_other_guard(self):
         now = timezone.now()
-        SecurityShift.objects.create(
+        self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(hours=9),
             scheduled_end=now - timedelta(hours=1),
             opened_at=now - timedelta(hours=9), status="OPEN",
         )
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now, scheduled_end=now + timedelta(hours=8),
         )
@@ -647,7 +655,7 @@ class CU13SecurityShiftTestCase(APITestCase):
         shift.refresh_from_db()
         self.assertIsNone(shift.opened_at)
 
-        other_shift = SecurityShift.objects.create(
+        other_shift = self.make_shift(
             guard_staff=self.staff_guard2,
             scheduled_start=now, scheduled_end=now + timedelta(hours=8),
         )
@@ -664,7 +672,7 @@ class CU13SecurityShiftTestCase(APITestCase):
             (end + timedelta(minutes=1), "LATE"),
         ]:
             with self.subTest(timing=expected_type):
-                shift = SecurityShift.objects.create(
+                shift = self.make_shift(
                     guard_staff=self.staff_guard1,
                     scheduled_start=start, scheduled_end=end,
                     opened_at=start, status="OPEN",
@@ -690,7 +698,7 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_exact_scheduled_end_closes_without_reason(self):
         end = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=end - timedelta(hours=8), scheduled_end=end,
             opened_at=end - timedelta(hours=8), status="OPEN",
@@ -703,7 +711,7 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_overdue_shift_stays_open_and_is_visible_to_guard_and_admin(self):
         now = timezone.now()
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(hours=9), scheduled_end=now - timedelta(hours=1),
             opened_at=now - timedelta(hours=9), status="OPEN",
@@ -724,11 +732,11 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_missed_shift_history_and_current_prefer_upcoming_shift(self):
         now = timezone.make_aware(datetime(2026, 10, 6, 12, 0))
-        missed = SecurityShift.objects.create(
+        missed = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now - timedelta(hours=4), scheduled_end=now - timedelta(hours=1),
         )
-        upcoming = SecurityShift.objects.create(
+        upcoming = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=now + timedelta(hours=4), scheduled_end=now + timedelta(hours=8),
         )
@@ -748,7 +756,7 @@ class CU13SecurityShiftTestCase(APITestCase):
 
     def test_start_tolerance_across_midnight_and_overnight_shift(self):
         start = timezone.make_aware(datetime(2026, 10, 7, 0, 5))
-        shift = SecurityShift.objects.create(
+        shift = self.make_shift(
             guard_staff=self.staff_guard1,
             scheduled_start=start, scheduled_end=start + timedelta(hours=8),
         )

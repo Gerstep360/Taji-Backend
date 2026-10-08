@@ -7,6 +7,8 @@ from rest_framework import serializers
 from condominiums.models import Condominium, Staff
 from security.models import SecurityShift
 from .timing import closing_timing, start_allowed_at, start_block_reason
+from tenancy.context import TenantContext
+from .tenancy import tenant_shifts
 
 
 class SecurityShiftSerializer(serializers.ModelSerializer):
@@ -94,7 +96,7 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
         now = self.context.setdefault("shift_server_time", timezone.now())
         open_shifts = self.context.setdefault("guard_open_shifts", {})
         if obj.guard_staff_id not in open_shifts:
-            open_shifts[obj.guard_staff_id] = SecurityShift.objects.filter(
+            open_shifts[obj.guard_staff_id] = tenant_shifts().filter(
                 guard_staff_id=obj.guard_staff_id, status=SecurityShift.Status.OPEN
             ).values_list("id", flat=True).first()
         other_id = open_shifts[obj.guard_staff_id]
@@ -144,6 +146,16 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
         if not guard_staff:
             raise serializers.ValidationError({"guard_staff": "El guardia de seguridad es obligatorio."})
 
+        tenant = TenantContext.get_current_tenant()
+        if not tenant or not tenant.is_active:
+            raise serializers.ValidationError({"condominium": "Selecciona un condominio activo."})
+        if guard_staff.condominium_id != tenant.pk:
+            raise serializers.ValidationError({"guard_staff": "El guardia debe pertenecer al condominio actual."})
+        requested_condo = attrs.get("condominium")
+        if requested_condo and requested_condo.pk != tenant.pk:
+            raise serializers.ValidationError({"condominium": "El turno debe pertenecer al condominio actual."})
+        attrs["condominium"] = tenant
+
         # 2. Regla 1: Solo personal perteneciente al área SEGURIDAD puede ser asignado
         if guard_staff.staff_type != Staff.Type.SECURITY:
             raise serializers.ValidationError(
@@ -177,19 +189,6 @@ class SecurityShiftSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"detail": "Existe solapamiento de horario con otro turno registrado para este guardia de seguridad."}
             )
-
-        # Use the same current-condominium convention as CU03 when the
-        # scheduling client does not provide an association. Preserve existing
-        # associations when updating a shift.
-        if not attrs.get("condominium"):
-            condominium = getattr(self.instance, "condominium", None)
-            if condominium is None:
-                condominium = Condominium.objects.filter(is_active=True).first()
-            if condominium is None:
-                raise serializers.ValidationError({
-                    "condominium": "Configura un condominio activo antes de programar turnos."
-                })
-            attrs["condominium"] = condominium
 
         return attrs
 
