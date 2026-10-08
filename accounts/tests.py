@@ -20,7 +20,7 @@ from config.api import TajiPageNumberPagination
 from condominiums.models import Resident, ResidentUnit, Unit
 from .models import LoginAttempt, Person, Role, SystemPermission, User
 from .rbac import ROLE_DEFINITIONS
-from .tokens import token_generator
+from .tokens import check_activation_token, token_generator
 
 
 PASSWORD = "TajiSeguro2026!"
@@ -802,6 +802,62 @@ class ActivationTokenSurvivesLoginTests(APITestCase):
         token = default_token_generator.make_token(self.user)
 
         self.assertTrue(token_generator.check_token(self.user, token))
+
+    def test_a_legacy_link_still_works_after_the_user_has_logged_in(self):
+        """
+        Regresión del corte de invitaciones.
+
+        Los enlaces se enviaron con el generador de Django, que hashea
+        `last_login`. Como ese campo pasó a actualizarse en el mismo cambio,
+        al desplegar ambos, todo enlace pendiente dejó de validar y la pantalla
+        de activación respondió "no es válido o ya expiró".
+        """
+        legacy_token = default_token_generator.make_token(self.user)
+
+        # El residente entra con la contraseña temporal: se registra `last_login`.
+        self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "orden@example.com", "password": "Temporal2026!", "client": "web"},
+            format="json",
+        )
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.last_login)
+
+        # El enlace que tenía en el correo debe seguir sirviendo.
+        self.assertTrue(check_activation_token(self.user, legacy_token))
+
+    def test_a_legacy_link_still_completes_the_activation_end_to_end(self):
+        legacy_token = default_token_generator.make_token(self.user)
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+
+        self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "orden@example.com", "password": "Temporal2026!", "client": "web"},
+            format="json",
+        )
+
+        response = self.client.post(
+            "/api/v1/auth/reset-password/",
+            {
+                "uid": uid,
+                "token": legacy_token,
+                "password": "ClaveDefinitiva2026!",
+                "password_confirm": "ClaveDefinitiva2026!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("ClaveDefinitiva2026!"))
+
+    def test_a_garbage_token_is_still_rejected(self):
+        """El fallback no puede abrir la puerta a cualquier cadena."""
+        self.user.last_login = timezone.now()
+        self.user.save(update_fields=["last_login"])
+
+        self.assertFalse(check_activation_token(self.user, "no-es-un-token"))
+        self.assertFalse(check_activation_token(self.user, ""))
 
 
 class SessionRevocationQueryBudgetTests(APITestCase):

@@ -27,7 +27,7 @@ from accounts.api_serializers import (
 )
 from accounts.cookies import clear_auth_cookies, set_auth_cookies
 from accounts.models import LoginAttempt, User
-from accounts.tokens import token_generator
+from accounts.tokens import check_activation_token, token_generator
 from auditlog.services import record_audit_event
 from condominiums.models import ResidentUnit
 from accounts.serializers import (
@@ -540,7 +540,10 @@ class ResetPasswordView(generics.GenericAPIView):
         except (ValueError, TypeError, OverflowError, User.DoesNotExist):
             user = None
 
-        if user is None or not token_generator.check_token(user, data["token"]):
+        # Se aceptan tambien los enlaces emitidos con el generador anterior:
+        # hay invitaciones en bandejas de entrada que se invalidaron al cambiar
+        # el formato del token. Ver `accounts.tokens.check_activation_token`.
+        if user is None or not check_activation_token(user, data["token"]):
             raise serializers.ValidationError({"token": ["El enlace no es válido o ya expiró."]})
 
         try:

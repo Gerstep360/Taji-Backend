@@ -87,10 +87,14 @@ acquire_lock() {
     fi
 }
 
+# Aborta el script. `exit`, no `return`: dentro de una funcion `return 1` solo
+# sale de `fail` y la funcion que la llamo sigue adelante, de modo que los
+# guards `[[ ... ]] || fail "..."` no detenian nada y el despliegue continuaba
+# hasta la migracion, precisamente lo que esos guards debes impedir.
 fail() {
     echo -e "${RED}ERROR: $*${RESET}" >&2
     release_lock
-    return 1 2>/dev/null || exit 1
+    exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail 'Este script debe ejecutarse con sudo.'
@@ -566,13 +570,22 @@ do_deploy_backend() {
     # usa el env de la version *anterior* (todavia activa) y el backup mas
     # reciente como red de seguridad: si el respaldo falla, la migracion se
     # detiene en vez de seguir a ciegas.
+    # Se reutiliza `run_backup_cli`, que ya resuelve el directorio, el env y la
+    # ejecucion como usuario `taji`. Invocar el script directamente desde aqui
+    # fallaba: la ruta `deploy/backup_database.py` es relativa y se resolvia
+    # contra el directorio desde el que se lanzo el menu (el clon de git del
+    # operador), que pertenece a root, asi que `taji` recibia "Permission denied".
     PREMIGRATION_BACKUP=""
-    (install -d -m 0700 -o taji -g taji "$(resolve_backup_dir)" && \
-        runuser -u taji --preserve-environment -- "$ROOT/current/.venv/bin/python" \
-        deploy/backup_database.py --settings=config.settings_production create --prefix premigrate) \
-        >/tmp/taji-premigrate-backup.log 2>&1 &
+    local pre_migrate_marker
+    pre_migrate_marker=$(mktemp /tmp/taji-premigrate-marker.XXXXXX)
+    (run_backup_cli create --prefix premigrate) >/tmp/taji-premigrate-backup.log 2>&1 &
     animated_progress_bar $! "Respaldando PostgreSQL antes de migrar"
-    PREMIGRATION_BACKUP=$(ls -1t "$(resolve_backup_dir)"/premigrate-*.dump 2>/dev/null | head -n 1 || true)
+    # Solo cuenta un dump creado en ESTE intento. Tomar el mas reciente sin mas
+    # daria por bueno el respaldo de un despliegue anterior si este fallara:
+    # la migracion avanzaria sin copia que la respalde.
+    PREMIGRATION_BACKUP=$(find "$(resolve_backup_dir)" -maxdepth 1 \
+        -name 'premigrate-*.dump' -newer "$pre_migrate_marker" -print 2>/dev/null | head -n 1 || true)
+    rm -f "$pre_migrate_marker"
     if [[ -z $PREMIGRATION_BACKUP || ! -s $PREMIGRATION_BACKUP ]]; then
         cat /tmp/taji-premigrate-backup.log 2>/dev/null || true
         fail "No se pudo respaldar la base antes de migrar. Deteniendo el despliegue para no arriesgar los datos."
