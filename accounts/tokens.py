@@ -37,7 +37,7 @@ enlace sobrevive a un ingreso legítimo y sigue muriendo por lo único que
 importa, que es el cambio de contraseña.
 """
 
-from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.contrib.auth.tokens import PasswordResetTokenGenerator, default_token_generator
 
 
 class TajiTokenGenerator(PasswordResetTokenGenerator):
@@ -59,4 +59,31 @@ class TajiTokenGenerator(PasswordResetTokenGenerator):
 #: Generador unico compartido por el alta de cuenta y el restablecimiento.
 token_generator = TajiTokenGenerator()
 
-__all__ = ["TajiTokenGenerator", "token_generator"]
+
+def check_activation_token(user, token) -> bool:
+    """
+    Valida un enlace aceptando tanto el formato nuevo como el de Django.
+
+    **Por que hacen falta los dos.** Los enlaces de invitación se enviaron por
+    correo con el generador de Django, que hashea `last_login`. Ese campo
+    estaba sin usar (nunca se actualizaba) y se pasó a actualizar en el mismo
+    cambio, así que al desplegar ambos, todo enlace pendiente que estuviera en
+    la bandeja de alguien dejo de validar de golpe y la pantalla respondio
+    "El enlace no es válido o ya expiró".
+
+    Aceptar el formato antiguo evita cortar el acceso de quien ya recibio su
+    invitación. El formato nuevo se prueba primero porque es el que se emite.
+
+    Cuando pase lo que dura `PASSWORD_RESET_TIMEOUT` (3 dias por defecto) ya
+    no quedara ningun enlace antiguo vigente y este fallback puede retirarse.
+    """
+    if token_generator.check_token(user, token):
+        return True
+    return default_token_generator.check_token(user, token)
+
+
+__all__ = [
+    "TajiTokenGenerator",
+    "check_activation_token",
+    "token_generator",
+]

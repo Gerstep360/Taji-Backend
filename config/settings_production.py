@@ -13,6 +13,14 @@ if not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS:
     raise ImproperlyConfigured("Production requires explicit ALLOWED_HOSTS.")
 DATABASES = {"default": env.db("DATABASE_URL")}
 DATABASES["default"]["CONN_MAX_AGE"] = 60
+# Sin esta comprobacion, Django reutiliza una conexion cacheada sin verificar
+# que PostgreSQL la siga aceptando. El despliegue reinicia PostgreSQL, y los
+# workers de Gunicorn sobreviven a ese reinicio con conexiones ya muertas: la
+# siguiente peticion que las toque recibe `OperationalError` y el manejador de
+# errores la traducía a un 503 "La base de datos no esta disponible
+# temporalmente". Con la comprobacion, Django detecta la conexion cerrada y
+# abre otra de forma transparente.
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 IS_SECURE = env.bool("COOKIE_SECURE", default=False)
 AUTH_COOKIE_SECURE = SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = IS_SECURE
 SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)
