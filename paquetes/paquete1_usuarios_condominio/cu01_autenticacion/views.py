@@ -14,7 +14,7 @@ from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
 from accounts.api_serializers import (
@@ -30,6 +30,7 @@ from accounts.models import LoginAttempt, User
 from auditlog.services import record_audit_event
 from condominiums.models import ResidentUnit
 from accounts.serializers import (
+    ChangePasswordSerializer,
     ForgotPasswordSerializer,
     LoginSerializer,
     LogoutSerializer,
@@ -229,6 +230,13 @@ class LoginView(generics.GenericAPIView):
 
         tokens = token_pair_for_user(user)
         payload = {"message": "Sesión iniciada.", "user": UserSerializer(user).data}
+        # La sesión sí se abre: el residente entra con la clave temporal, pero
+        # el cliente debe dirigirlo a cambiar la contraseña antes de seguir.
+        if user.must_change_password:
+            payload["must_change_password"] = True
+            payload["message"] = (
+                "Sesión iniciada con contraseña temporal. Debes definir una nueva contraseña."
+            )
         if serializer.validated_data["client"] == "mobile":
             payload["tokens"] = tokens
             return Response(payload)
@@ -497,7 +505,9 @@ class ResetPasswordView(generics.GenericAPIView):
             raise serializers.ValidationError({"password": error.messages}) from error
 
         user.set_password(data["password"])
-        user.save(update_fields=["password", "updated_at"])
+        # Definió su propia clave: ya no aplica la contraseña temporal.
+        user.must_change_password = False
+        user.save(update_fields=["password", "must_change_password", "updated_at"])
 
         for outstanding in OutstandingToken.objects.filter(user=user):
             BlacklistedToken.objects.get_or_create(token=outstanding)
@@ -512,3 +522,95 @@ class ResetPasswordView(generics.GenericAPIView):
         )
 
         return Response({"message": "Tu contraseña fue actualizada. Ya puedes iniciar sesión."})
+
+
+class ChangePasswordView(generics.GenericAPIView):
+    """
+    Cambio de contraseña del usuario autenticado.
+
+    Es el paso final del alta con contraseña temporal: el residente entra con
+    la clave que le llegó por correo y aquí define la definitiva.
+
+    Exigir la contraseña actual es deliberado: impide que alguien con una
+    sesión abandonada en un equipo compartido cambie la clave sin saber la
+    anterior. La protección principal sigue siendo `must_change_password` más la
+    invalidación del resto de sesiones que hace este endpoint.
+    """
+
+    serializer_class = ChangePasswordSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    # Sin `throttle_scope`: compartiría el cupo del scope "password_reset" con
+    # las peticiones anónimas de recuperación, así que un atacante podría agotar
+    # la cuota de un usuario legítimamente. Aquí el actor ya está autenticado.
+
+    @extend_schema(
+        tags=["Autenticación"],
+        summary="Cambiar la contraseña de la sesión activa",
+        description=(
+            "Requiere la contraseña actual. Al completarse, se cierra el resto de "
+            "sesiones abiertas y se levanta la obligatoriedad de cambiar la contraseña."
+        ),
+        request=ChangePasswordSerializer,
+        responses={200: MessageResponseSerializer, 400: VALIDATION_RESPONSE, 401: AUTH_ERROR_RESPONSE},
+    )
+    @transaction.atomic
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+
+        if not user.check_password(serializer.validated_data["current_password"]):
+            return Response(
+                {
+                    "detail": "La contraseña actual no es correcta.",
+                    "error": {
+                        "code": "authentication_failed",
+                        "message": "La contraseña actual no es correcta.",
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            password_validation.validate_password(serializer.validated_data["password"], user)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError({"password": error.messages}) from error
+
+        user.set_password(serializer.validated_data["password"])
+        user.must_change_password = False
+        user.save(update_fields=["password", "must_change_password", "updated_at"])
+
+        # La clave temporal pudo compartirse; cerrar las otras sesiones evita que
+        # alguien que la conozca siga operando con la cuenta.
+        self._revoke_other_sessions(user, request)
+
+        record_audit_event(
+            action_code="auth.password.changed",
+            resource_type="User",
+            resource_id=user.id,
+            description=f"Cambio de contraseña completado para '{user.email}'.",
+            actor_user=user,
+            request=request,
+        )
+
+        return Response({"message": "Tu contraseña fue actualizada correctamente."})
+
+    @staticmethod
+    def _revoke_other_sessions(user, request) -> None:
+        """Invalida los refresh tokens previos al de esta sesión."""
+        current_jti = None
+        raw_access = request.headers.get("Authorization", "")
+        if raw_access.startswith("Bearer "):
+            try:
+                current_jti = AccessToken(raw_access[7:])["jti"]
+            except (TokenError, KeyError, ValueError):
+                current_jti = None
+
+        keep_token = None
+        if current_jti:
+            keep_token = OutstandingToken.objects.filter(user=user, token__jti=current_jti).first()
+
+        for outstanding in OutstandingToken.objects.filter(user=user).exclude(
+            id=keep_token.id if keep_token else None
+        ):
+            BlacklistedToken.objects.get_or_create(token=outstanding)

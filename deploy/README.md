@@ -94,11 +94,60 @@ ajusta también `ALLOWED_HOSTS` y los orígenes en la configuración.
 
 ## Configuración que depende del servicio real
 
-- Para enviar recuperación de contraseñas, configura SMTP en
-  `/etc/taji/backend.env`: `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`,
-  `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`,
-  `EMAIL_HOST_PASSWORD` y `DEFAULT_FROM_EMAIL`. Sin SMTP los correos usan el
-  backend de consola existente. Después ejecuta `sudo systemctl restart taji`.
+### Correo (SMTP) — obligatorio para las invitaciones
+
+Las invitaciones de acceso de residentes y el restablecimiento de contraseña se
+envían por SMTP. **Sin configurar esto nada sale**: el instalador deja
+`EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`, que acepta el
+mensaje y lo escribe en el log de Gunicorn, así que Django nunca reporta un
+error aunque la invitación no se haya enviado.
+
+La API ya no esconde ese caso: el alta de un residente devuelve
+`invitation.email_sent=false` con un detalle explicativo, y *Reenviar
+invitación* responde `502` en lugar de un `200` falso.
+
+Configúralo desde el menú del instalador:
+
+```
+sudo ./deploy/vps.sh
+# Opción [12] Configurar Envío de Correo SMTP
+```
+
+La opción pide servidor, puerto, usuario, contraseña y remitente; escribe las
+variables en `/etc/taji/backend.env` conservando el resto del archivo, reinicia
+Gunicorn y envía un correo de prueba para confirmar que llegó.
+
+Equivalente manual (equipo ya instalado):
+
+```bash
+sudo nano /etc/taji/backend.env   # o sudoedit
+```
+
+```ini
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=taji.app@gmail.com
+EMAIL_HOST_PASSWORD=abcd efgh ijkl mnop
+DEFAULT_FROM_EMAIL=Taji <taji.app@gmail.com>
+```
+
+```bash
+sudo systemctl restart taji
+sudo journalctl -u taji -n 50 --no-pager
+```
+
+En Gmail la contraseña debe ser una **contraseña de aplicación**
+(https://myaccount.google.com/apppasswords), no la contraseña de la cuenta. Sin
+verificación en dos pasos activada, Google no emite contraseñas de aplicación.
+
+Las claves de aplicación de Google contienen espacios. `django-environ` conserva
+el valor tal cual y `smtplib` lo acepta, pero si tu servidor da problemas de
+autenticación, quita los espacios de `EMAIL_HOST_PASSWORD`.
+
+### Otras variables
+
 - Si frontend y API pertenecen a sitios diferentes, revisa la política de
   cookies del navegador y configura `COOKIE_SAMESITE=None` cuando corresponda.
   Los orígenes autorizados son explícitos en `FRONTEND_URLS`.

@@ -186,6 +186,12 @@ VISIT_QR_MIN_TTL_MINUTES = env.int("VISIT_QR_MIN_TTL_MINUTES", default=5)
 # Corrección de errores del símbolo QR: "low" | "medium" | "quartile" | "high".
 VISIT_QR_ECC = env("VISIT_QR_ECC", default="medium")
 VISIT_QR_IMAGE_SCALE = env.int("VISIT_QR_IMAGE_SCALE", default=6)
+# Bitácora de escaneos: tope de códigos QR desconocidos que se persisten por
+# guardia dentro de la ventana. Superado el tope, el veredicto se sigue
+# devolviendo pero el intento no crea una fila (evita que una cadena aleatoria
+# llene la tabla). Los escaneos sobre QR reales nunca se omiten.
+QR_SCAN_UNKNOWN_LOG_LIMIT = env.int("QR_SCAN_UNKNOWN_LOG_LIMIT", default=30)
+QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES = env.int("QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES", default=60)
 
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Taji <no-reply@taji.app>")

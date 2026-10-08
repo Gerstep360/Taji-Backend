@@ -154,6 +154,82 @@ class AccessEvent(models.Model):
         ]
 
 
+class VisitQrScan(models.Model):
+    """
+    Bitácora de **todo** escaneo realizado por el personal de seguridad (RF-10).
+
+    `AccessEvent` responde a "¿quién entró y a qué hora?", por lo que solo
+    registra los escaneos que resuelven a una autorización real. Esta tabla
+    responde a la otra pregunta de la portería: "¿cuántos escaneos se hicieron,
+    cuántos fueron exitosos, cuántos fallidos y por qué?".
+
+    A diferencia de `AccessEvent`, aquí también se persisten los códigos QR
+    desconocidos (`NOT_FOUND`), porque son precisamente los intentos
+    sospechosos que la seguridad necesita ver. El texto escaneado nunca se
+    guarda en claro: solo su SHA-256, igual que el token de la autorización.
+    """
+
+    class Result(models.TextChoices):
+        VALID = "VALID", "Válido"
+        REJECTED = "REJECTED", "Denegado"
+        NOT_FOUND = "NOT_FOUND", "Código desconocido"
+
+    authorization = models.ForeignKey(
+        VisitAuthorization,
+        on_delete=models.SET_NULL,
+        related_name="qr_scans",
+        null=True,
+        blank=True,
+    )
+    access_event = models.ForeignKey(
+        AccessEvent,
+        on_delete=models.SET_NULL,
+        related_name="qr_scans",
+        null=True,
+        blank=True,
+    )
+    guard_staff = models.ForeignKey(
+        "condominiums.Staff",
+        on_delete=models.SET_NULL,
+        related_name="qr_scans",
+        null=True,
+        blank=True,
+    )
+    scanned_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        related_name="qr_scans",
+        null=True,
+        blank=True,
+    )
+    result = models.CharField(max_length=20, choices=Result.choices)
+    # Código de motivo (`VALID` o un valor de `QrRejection`), consultable y no truncado.
+    reason = models.CharField(max_length=40)
+    message = models.CharField(max_length=300, blank=True)
+    # SHA-256 del texto escaneado. Permite correlacionar intentos del mismo
+    # código sin almacenar un token reutilizable.
+    scanned_token_hash = models.CharField(max_length=64, blank=True, editable=False)
+    visitor_name = models.CharField(max_length=220, blank=True)
+    visitor_document_number = models.CharField(max_length=30, blank=True)
+    device_id = models.CharField(max_length=120, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    notes = models.CharField(max_length=300, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "visit_qr_scan"
+        ordering = ("-occurred_at",)
+        indexes = [
+            models.Index(fields=("-occurred_at",), name="idx_qr_scan_time"),
+            models.Index(fields=("result", "-occurred_at"), name="idx_qr_scan_result"),
+            models.Index(fields=("guard_staff", "-occurred_at"), name="idx_qr_scan_guard"),
+            models.Index(fields=("scanned_token_hash",), name="idx_qr_scan_token"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_result_display()} ({self.reason}) @ {self.occurred_at:%Y-%m-%d %H:%M}"
+
+
 class SecurityShift(models.Model):
     class Status(models.TextChoices):
         SCHEDULED = "SCHEDULED", "Programado"
@@ -297,7 +373,10 @@ class BiometricReference(models.Model):
     resident = models.ForeignKey(
         "condominiums.Resident", on_delete=models.CASCADE, related_name="biometric_references"
     )
-    reference_image = models.CharField(max_length=500, blank=True)
+    # Data URL base64 de la foto de referencia. TextField y no CharField: una
+    # captura real de cámara supera con creces los 500 caracteres y PostgreSQL
+    # rechazaba el INSERT con DataError (HTTP 503 en la API).
+    reference_image = models.TextField(blank=True)
     embedding = models.BinaryField()
     embedding_dim = models.SmallIntegerField()
     model_name = models.CharField(max_length=80)
@@ -329,7 +408,10 @@ class FaceVerification(models.Model):
         NO_MATCH = "NO_MATCH", "Sin coincidencia"
         REVIEW = "REVIEW", "Revisión"
 
-    captured_image = models.CharField(max_length=500, blank=True)
+    # Data URL base64 de la captura del guardia. TextField y no CharField: una
+    # foto real de 640x480 en JPEG ocupa cientos de KB y PostgreSQL recortaba
+    # el INSERT a varchar(500) lanzando DataError (HTTP 503 en la API).
+    captured_image = models.TextField(blank=True)
     matched_resident = models.ForeignKey(
         "condominiums.Resident",
         on_delete=models.SET_NULL,

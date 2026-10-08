@@ -12,6 +12,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory, APITestCase
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from config.api import TajiPageNumberPagination
@@ -570,3 +571,130 @@ class RegistrationSecurityTests(APITestCase):
         if user:
             self.assertEqual(user.role.slug, "residente")
             self.assertFalse(user.is_approved)
+
+
+class TemporaryPasswordChangeTests(APITestCase):
+    """
+    Cambio de contraseña tras entrar con la clave temporal de la invitación.
+
+    Es el cierre del flujo de alta de un residente: entra con la clave que le
+    llegó por correo y aquí define la definitiva.
+    """
+
+    CHANGE_URL = "/api/v1/auth/change-password/"
+    TEMPORARY = "Temporal2026!"
+    NEW_PASSWORD = "NuevaClaveSegura2026!"
+
+    def setUp(self):
+        self.role = Role.objects.get(slug="residente")
+        self.user = User.objects.create_user(
+            email="temporal@example.com",
+            password=self.TEMPORARY,
+            first_name="Temporal",
+            last_name="Residente",
+            role=self.role,
+            must_change_password=True,
+        )
+
+    def change(self, current=TEMPORARY, new=None, confirm=None, **extra):
+        payload = {
+            "current_password": current,
+            "password": new or self.NEW_PASSWORD,
+            "password_confirm": confirm if confirm is not None else (new or self.NEW_PASSWORD),
+        }
+        payload.update(extra)
+        return self.client.post(self.CHANGE_URL, payload, format="json")
+
+    def test_changing_the_password_clears_the_mandatory_change_flag(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.change()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.must_change_password)
+        self.assertTrue(self.user.check_password(self.NEW_PASSWORD))
+
+    def test_login_after_the_change_no_longer_demands_a_new_password(self):
+        self.client.force_authenticate(self.user)
+        self.change()
+
+        self.client.force_authenticate(None)
+        response = self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "temporal@example.com", "password": self.NEW_PASSWORD, "client": "web"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("must_change_password", response.data)
+
+    def test_login_with_the_temporary_password_stops_working(self):
+        self.client.force_authenticate(self.user)
+        self.change()
+
+        self.client.force_authenticate(None)
+        response = self.client.post(
+            "/api/v1/auth/login/",
+            {"email": "temporal@example.com", "password": self.TEMPORARY, "client": "web"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_wrong_current_password_is_rejected(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.change(current="NoEsLaTemporal2026!")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.must_change_password)
+        self.assertTrue(self.user.check_password(self.TEMPORARY))
+
+    def test_mismatched_confirmation_is_rejected(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.change(new=self.NEW_PASSWORD, confirm="OtraClave2026!")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.TEMPORARY))
+
+    def test_weak_password_is_rejected_by_the_validators(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.change(new="1234567890", confirm="1234567890")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.TEMPORARY))
+
+    def test_anonymous_cannot_change_the_password(self):
+        response = self.change()
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_other_sessions_are_revoked_after_the_change(self):
+        """
+        La clave temporal pudo compartirse: se cierran las sesiones ajenas.
+
+        Lo que se invalida es el refresh token. El access token ya emitido sigue
+        válido hasta expirar, que es el comportamiento normal de JWT: por eso
+        el cambio no puede depender solo de la lista negra.
+        """
+        self.client.force_authenticate(self.user)
+        other_refresh = RefreshToken.for_user(self.user)
+        jti = other_refresh["jti"]
+        outstanding = OutstandingToken.objects.get(
+            id=next(t.id for t in OutstandingToken.objects.all() if t.jti == jti)
+        )
+
+        self.change()
+
+        from rest_framework_simplejwt.exceptions import TokenError
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+
+        self.assertTrue(BlacklistedToken.objects.filter(token=outstanding).exists())
+        with self.assertRaises(TokenError):
+            RefreshToken(str(other_refresh))
