@@ -57,8 +57,8 @@ animated_progress_bar() {
         step=$((step + 1))
         sleep 0.1
     done
-    wait "$pid"
-    local exit_code=$?
+    local exit_code=0
+    wait "$pid" || exit_code=$?
     
     local full_bar=""
     for ((i=0; i<width; i++)); do full_bar="${full_bar}#"; done
@@ -87,10 +87,14 @@ acquire_lock() {
     fi
 }
 
+# Aborta el script. `exit`, no `return`: dentro de una funcion `return 1` solo
+# sale de `fail` y la funcion que la llamo sigue adelante, de modo que los
+# guards `[[ ... ]] || fail "..."` no detenian nada y el despliegue continuaba
+# hasta la migracion, precisamente lo que esos guards debes impedir.
 fail() {
     echo -e "${RED}ERROR: $*${RESET}" >&2
     release_lock
-    return 1 2>/dev/null || exit 1
+    exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail 'Este script debe ejecutarse con sudo.'
@@ -112,6 +116,253 @@ do_update_git() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Respaldos
+#
+# Taji usa una unica base PostgreSQL compartida entre todos los tenants, asi
+# que un solo `pg_dump` de `taji` ya incluye todos los condominios. No hace
+# falta `pg_dumpall`.
+#
+# La logica vive en `deploy/backup_database.py`, que se encarga de volcar a un
+# archivo temporal, verificarlo con `pg_restore --list` y solo entonces
+# renombrarlo, de modo que un respaldo a medias nunca parezca uno valido.
+# Aqui solo se orquesta y se aplica la politica de retencion.
+# ---------------------------------------------------------------------------
+
+BACKUP_DIR=${BACKUP_DIR:-/var/backups/taji}
+
+# Resuelve `BACKUP_DIR` leyendo el env del servidor con `grep`, de modo que ese
+# archivo sea la unica fuente de verdad: si ahi se cambia la ruta, el menu, el
+# timer y Django apuntan al mismo sitio sin editar este script.
+#
+# Se lee con `grep` y NO con `source . "$ENV_FILE"`: el archivo contiene valores
+# como `DEFAULT_FROM_EMAIL=Taji <no-reply@taji.app>` y bash interpretaria el `<`
+# como una redireccion, rompiendo el despliegue.
+resolve_backup_dir() {
+    local configured=""
+    if [[ -f $ENV_FILE ]]; then
+        configured=$(sed -n 's/^BACKUP_DIR=//p' "$ENV_FILE" | tail -n 1 | tr -d '"'"'"' \r')
+    fi
+    echo "${configured:-$BACKUP_DIR}"
+}
+
+# Resuelve el dominio con el que se responde la API, para los mensajes finales.
+#
+# `DOMAIN` solo se define dentro de la instalacion (opcion [1], que lo pregunta
+# al operador). Las opciones [2] en adelante nunca lo definen, y como el script
+# corre con `set -u`, leerlo ahi abortaba el despliegue JUSTO DESPUES de imprimir
+# "DESPLIEGUE COMPLETADO": el mensaje de exito se mostraba y acto seguido el
+# script moria con "DOMAIN: unbound variable".
+#
+# Se lee de `ALLOWED_HOSTS`, que es donde la instalacion ya guardo ese valor.
+# Se usa `sed` y no `source`, por el motivo descrito en `resolve_backup_dir`.
+resolve_domain() {
+    local hosts=""
+    if [[ -f $ENV_FILE ]]; then
+        hosts=$(sed -n 's/^ALLOWED_HOSTS=//p' "$ENV_FILE" | tail -n 1 | tr -d '"'"'"' \r')
+    fi
+    local first
+    first=$(printf '%s' "$hosts" | cut -d, -f1)
+    printf '%s' "${first:-localhost}"
+}
+
+# Ejecuta el CLI de respaldos con el entorno del servidor.
+#
+# No se exporta el env a mano: `config.settings_production` ya lee
+# `/etc/taji/backend.env` por su cuenta, asi que `DATABASE_URL` y `BACKUP_DIR`
+# llegan solos y sin el problema de `source` descrito arriba.
+run_backup_cli() {
+    local backup_release=${TAJI_BACKUP_RELEASE:-$ROOT/current}
+    [[ -f $ENV_FILE ]] || fail "No existe $ENV_FILE. Ejecuta la opcion [1] primero."
+    [[ -d $backup_release ]] || fail "No existe el release para ejecutar el respaldo. Ejecuta la opcion [1] primero."
+
+    install -d -m 0700 -o taji -g taji "$(resolve_backup_dir)"
+
+    (cd "$backup_release" && runuser -u taji --preserve-environment -- \
+        "$backup_release/.venv/bin/python" deploy/backup_database.py --settings=config.settings_production "$@")
+}
+
+do_backup() {
+    local prefix=${1:-}
+    local dir
+    dir=$(resolve_backup_dir)
+    # Sin `--output-dir`: el directorio lo resuelve Django desde `BACKUP_DIR`,
+    # que sale del mismo env del servidor. Menos sitios donde desincronizarse.
+    local args=(create)
+    # Un respaldo manual se etiqueta para distinguirlo del automático al
+    # listarlos; no cambia nada más del procedimiento.
+    [[ -n $prefix ]] && args+=(--prefix "$prefix")
+
+    echo -e "${YELLOW}Generando y verificando respaldo PostgreSQL en $dir ...${RESET}"
+    if run_backup_cli "${args[@]}"; then
+        echo -e "${BRIGHT_GREEN}[OK] Respaldo generado y verificado.${RESET}"
+        do_list_backups
+    else
+        fail "No se pudo generar el respaldo."
+    fi
+}
+
+do_list_backups() {
+    local dir
+    dir=$(resolve_backup_dir)
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    printf '|%-72s|\n' "              RESPALDOS DISPONIBLES ($dir)"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+    run_backup_cli list || true
+    echo ""
+}
+
+do_verify_backup() {
+    local target=${1:-}
+    local dir
+    dir=$(resolve_backup_dir)
+    if [[ -z $target ]]; then
+        # Sin argumento se ofrece el más reciente, que es el que se quiere
+        # comprobar tras un respaldo manual.
+        target=$(ls -1t "$dir"/*.dump 2>/dev/null | head -n 1 || true)
+    fi
+    [[ -n $target && -f $target ]] || fail "No hay ningun respaldo en $dir para verificar."
+
+    echo -e "${YELLOW}Verificando $target ...${RESET}"
+    if run_backup_cli verify "$target"; then
+        echo -e "${BRIGHT_GREEN}[OK] El respaldo esta completo y es legible.${RESET}"
+    else
+        fail "El respaldo esta corrupto o incompleto."
+    fi
+}
+
+do_restore_backup() {
+    local target=${1:-}
+    if [[ -z $target ]]; then
+        do_list_backups
+        read -p " Ruta del respaldo a restaurar: " target
+    fi
+    [[ -n $target && -f $target ]] || fail "El archivo indicado no existe: $target"
+
+    read -p " Base de datos destino [taji_restaurado]: " TARGET_DB
+    TARGET_DB=${TARGET_DB:-"taji_restaurado"}
+
+    echo -e ""
+    echo -e "${BRIGHT_YELLOW}La restauracion se hace SIEMPRE en una base nueva.${RESET}"
+    echo -e "${BRIGHT_YELLOW}La base '${TARGET_DB}' se creara si no existe y quedara${RESET}"
+    echo -e "${BRIGHT_YELLOW}lista para inspeccionarla antes de ponerla en servicio.${RESET}"
+    read -p " Confirmar la restauracion en la base '${TARGET_DB}'? [s/N]: " CONFIRM
+    [[ $CONFIRM == "s" || $CONFIRM == "S" ]] || { echo "Cancelado."; return 0; }
+
+    if run_backup_cli restore "$target" --target-db "$TARGET_DB"; then
+        echo -e "${BRIGHT_GREEN}[OK] Restaurado en la base '${TARGET_DB}'.${RESET}"
+        echo -e "${GRAY}Para ponerla en servicio, ajusta DATABASE_URL en $ENV_FILE${RESET}"
+        echo -e "${GRAY}y reinicia con 'sudo systemctl restart taji'.${RESET}"
+    else
+        fail "No se pudo restaurar el respaldo."
+    fi
+}
+
+# Instala (o quita) el temporizador de respaldos automáticos.
+#
+# Se usa un `systemd timer` y no cron porque es lo mismo que ya hace el
+# instalador para `taji.service`, evita depender del paquete `cron` y trae
+# `Persistent=true`, que ejecuta el respaldo perdido si el servidor estaba
+# apagado a la hora programada.
+do_schedule_backup() {
+    local action=${1:-}
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|            RESPALDO AUTOMATICO PERIODICO (systemd timer)          |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+
+    if [[ $action == "off" || $action == "disable" ]]; then
+        systemctl disable --now taji-backup.timer >/dev/null 2>&1 || true
+        echo -e "${BRIGHT_GREEN}[OK] Respaldo automatico desactivado.${RESET}"
+        return 0
+    fi
+
+    if [[ $action == "status" ]]; then
+        systemctl list-timers taji-backup.timer --no-pager || true
+        return 0
+    fi
+
+    read -p " Hora diaria de ejecucion [03:00]: " BACKUP_HOUR
+    BACKUP_HOUR=${BACKUP_HOUR:-"03:00"}
+    read -p " Dias a conservar [14]: " KEEP_DAYS
+    KEEP_DAYS=${KEEP_DAYS:-14}
+    read -p " Minimo de respaldos a conservar [10]: " KEEP_COUNT
+    KEEP_COUNT=${KEEP_COUNT:-10}
+    # La ruta se resuelve antes de escribir las unidades para que el timer apunte
+    # exactamente al mismo directorio que usa el menu y Django.
+    BACKUP_DIR=$(resolve_backup_dir)
+
+    echo -e "\n${YELLOW}Instalando taji-backup.service y taji-backup.timer ...${RESET}"
+
+    cat >/etc/systemd/system/taji-backup.service <<UNIT
+[Unit]
+Description=Respaldo PostgreSQL de Taji (verificado)
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# El script lee DATABASE_URL y BACKUP_DIR del env del servidor, asi que no
+# necesita arrancar la aplicacion: por eso es independiente de taji.service.
+EnvironmentFile=$ENV_FILE
+WorkingDirectory=$ROOT/current
+ExecStart=$ROOT/current/.venv/bin/python deploy/backup_database.py --settings=config.settings_production create --prefix auto --keep-days $KEEP_DAYS --keep-count $KEEP_COUNT
+User=taji
+# El directorio lo crea el propio script, pero se prepara aqui para que el
+# servicio no falle por permisos.
+ExecStartPre=/usr/bin/install -d -m 0700 -o taji -g taji $BACKUP_DIR
+Nice=10
+IOSchedulingClass=idle
+UNIT
+
+    cat >/etc/systemd/system/taji-backup.timer <<UNIT
+[Unit]
+Description=Ejecuta el respaldo PostgreSQL de Taji cada dia a las $BACKUP_HOUR
+
+[Timer]
+OnCalendar=*-*-* $BACKUP_HOUR:00:00
+# Cubre caidas prolongadas: si el servidor estuvo apagado al llegar la hora,
+# arranca el respaldo pendiente en cuanto vuelve.
+Persistent=true
+# Espacia las ejecuciones si el timer se reinicia en bucle.
+RandomizedDelaySec=15m
+Unit=taji-backup.service
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+    systemctl daemon-reload
+    systemctl enable --now taji-backup.timer
+
+    echo -e "\n${BRIGHT_GREEN}[OK] Respaldo automatico activo.$BACKUP_HOUR todos los dias.${RESET}"
+    echo -e "${GRAY}Consulta con: systemctl list-timers taji-backup.timer${RESET}"
+    echo -e "${GRAY}Ultima ejecucion: journalctl -u taji-backup.service -n 30 --no-pager${RESET}"
+}
+
+# Submenu de respaldos: listar, verificar o restaurar.
+do_backup_menu() {
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|                     RESPALDOS DE LA BASE DE DATOS                     |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}\n"
+    echo -e " ${WHITE}[1]${RESET} Listar respaldos existentes"
+    echo -e " ${WHITE}[2]${RESET} Verificar un respaldo (comprueba que no este corrupto)"
+    echo -e " ${WHITE}[3]${RESET} Restaurar un respaldo en una base nueva"
+    echo -e " ${WHITE}[4]${RESET} Estado del respaldo automatico"
+    echo -e " ${WHITE}[5]${RESET} Volver\n"
+
+    read -p " Opcion [1-5]: " SUBOPT
+    case "$SUBOPT" in
+        1) do_list_backups ;;
+        2) do_verify_backup ;;
+        3) do_restore_backup ;;
+        4) do_schedule_backup "status" ;;
+        *) return 0 ;;
+    esac
+}
+
 show_backend_logs() {
     clear
     echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
@@ -121,7 +372,9 @@ show_backend_logs() {
 
     echo -e "${BRIGHT_WHITE}=== CONFIGURACION ACTIVA EN /etc/taji/backend.env ===${RESET}"
     if [[ -f /etc/taji/backend.env ]]; then
-        cat /etc/taji/backend.env
+        # Los secretos se ocultan: esta pantalla se deja abierta frente a un
+        # cliente y `cat` a secas imprimiría la clave SMTP y la de PostgreSQL.
+        sed -E 's/^(.*(PASSWORD|SECRET|KEY).*)=.*/\1=********/' /etc/taji/backend.env
     fi
     echo ""
 
@@ -330,6 +583,38 @@ do_deploy_backend() {
     manage() { (cd "$RELEASE" && runuser -u taji -- "$RELEASE/.venv/bin/python" manage.py "$@" --settings=config.settings_production); }
 
     (manage makemigrations --check --dry-run || true) >/dev/null 2>&1
+
+    # Respaldo previo a migrar.
+    #
+    # Una migración es el único paso del despliegue capaz de destruir datos de
+    # forma irreversible, asi que se guarda una copia verificada justo antes. Se
+    # Se utiliza el release preparado y el env del servidor, antes de modificar
+    # la base. run_backup_cli resuelve el directorio y ejecuta como usuario taji.
+    # Si el respaldo falla, se detiene el despliegue sin ejecutar migraciones.
+    PREMIGRATION_BACKUP=""
+    local pre_migrate_marker
+    pre_migrate_marker=$(mktemp /tmp/taji-premigrate-marker.XXXXXX)
+    # En una primera instalación todavía no existe current. El release nuevo
+    # ya está preparado, pero la base aún NO ha sido migrada: se respalda igual.
+    (TAJI_BACKUP_RELEASE="$RELEASE" run_backup_cli create --prefix premigrate) >/tmp/taji-premigrate-backup.log 2>&1 &
+    local backup_pid=$!
+    if ! animated_progress_bar "$backup_pid" "Respaldando PostgreSQL antes de migrar"; then
+        cat /tmp/taji-premigrate-backup.log 2>/dev/null || true
+        rm -f "$pre_migrate_marker"
+        fail "No se pudo respaldar la base antes de migrar. Deteniendo el despliegue para no arriesgar los datos."
+    fi
+    # Solo cuenta un dump creado en ESTE intento. Tomar el mas reciente sin mas
+    # daria por bueno el respaldo de un despliegue anterior si este fallara:
+    # la migracion avanzaria sin copia que la respalde.
+    PREMIGRATION_BACKUP=$(find "$(resolve_backup_dir)" -maxdepth 1 \
+        -name 'premigrate-*.dump' -newer "$pre_migrate_marker" -print 2>/dev/null | head -n 1 || true)
+    rm -f "$pre_migrate_marker"
+    if [[ -z $PREMIGRATION_BACKUP || ! -s $PREMIGRATION_BACKUP ]]; then
+        cat /tmp/taji-premigrate-backup.log 2>/dev/null || true
+        fail "No se pudo respaldar la base antes de migrar. Deteniendo el despliegue para no arriesgar los datos."
+    fi
+    echo -e "${BRIGHT_GREEN}[OK] Respaldo previo a migrar: $PREMIGRATION_BACKUP${RESET}"
+
     manage migrate --noinput
     (manage collectstatic --noinput) >/dev/null 2>&1
     chmod -R a+rX "$RELEASE/staticfiles"
@@ -360,7 +645,7 @@ do_deploy_backend() {
         echo -e "\n${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
         echo -e "${BRIGHT_GREEN}|   DESPLIEGUE DEL BACKEND COMPLETADO EXITOSAMENTE CON ZERO-DOWNTIME!    |${RESET}"
         echo -e "${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
-        echo -e " Backend API: ${BRIGHT_CYAN}http://$DOMAIN/api/v1/${RESET}"
+        echo -e " Backend API: ${BRIGHT_CYAN}http://$(resolve_domain)/api/v1/${RESET}"
         echo -e " Commit SHA:  ${BRIGHT_MAGENTA}$SHA${RESET}\n"
     else
         echo -e "${RED}[ERROR] El servidor Django no respondio despues del reinicio.${RESET}"
@@ -368,6 +653,134 @@ do_deploy_backend() {
         journalctl -u taji -n 25 --no-pager || true
         fail "Fallo el arranque del servicio Backend Gunicorn."
     fi
+}
+
+do_configure_smtp() {
+    [[ -f $ENV_FILE ]] || fail "No existe $ENV_FILE. Ejecuta la opcion [1] primero."
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|        CONFIGURAR ENVIO DE CORREO (SMTP) PARA INVITACIONES            |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo ""
+    echo -e " ${WHITE}Las invitaciones de acceso de residentes y la recuperacion de contrasena${RESET}"
+    echo -e " ${WHITE}se envian por SMTP. Sin esto, Django usa el backend de CONSOLA:${RESET}"
+    echo -e " ${WHITE}acepta el mensaje y lo escribe en el log, sin enviarlo nunca.${RESET}"
+    echo ""
+    echo -e " ${YELLOW}Para Gmail usa una 'contrasena de aplicacion', no tu contrasena real:${RESET}"
+    echo -e " ${YELLOW}https://myaccount.google.com/apppasswords${RESET}"
+    echo ""
+
+    read -p " Servidor SMTP [smtp.gmail.com]: " SMTP_HOST
+    SMTP_HOST=${SMTP_HOST:-"smtp.gmail.com"}
+
+    read -p " Puerto [587]: " SMTP_PORT
+    SMTP_PORT=${SMTP_PORT:-"587"}
+
+    read -p " Usuario (correo emisor) [tucorreo@gmail.com]: " SMTP_USER
+    SMTP_USER=${SMTP_USER:-""}
+
+    if [[ -z $SMTP_USER ]]; then
+        fail "El usuario SMTP es obligatorio."
+    fi
+
+    # `read -s` para que la clave de aplicacion no quede en el historial de la
+    # terminal ni en la salida de `set -x`.
+    read -s -p " Contrasena de aplicacion (no se mostrara): " SMTP_PASS
+    echo ""
+    if [[ -z $SMTP_PASS ]]; then
+        fail "La contrasena SMTP es obligatoria."
+    fi
+
+    read -p " TLS/SSL (s/n) [s]: " SMTP_TLS
+    SMTP_TLS=${SMTP_TLS:-"s"}
+    [[ $SMTP_TLS == "n" || $SMTP_TLS == "N" ]] && SMTP_USE_TLS=False || SMTP_USE_TLS=True
+
+    read -p " Remitente [Taji <$SMTP_USER>]: " SMTP_FROM
+    SMTP_FROM=${SMTP_FROM:-"Taji <$SMTP_USER>"}
+
+    echo ""
+    echo -e "${YELLOW}Guardando en $ENV_FILE y reiniciando Gunicorn...${RESET}"
+
+    # Los valores viajan por variables de entorno, no interpolados en el código
+    # Python: una clave de aplicación con comillas o `$(...)` rompería el
+    # literal y dejaría el archivo a medias.
+    #
+    # Se escribe como root, no como `taji`: el archivo es root:taji 0640 y el
+    # usuario de servicio solo tiene lectura, que es lo que debe mantener.
+    (cd "$ROOT/current" && \
+        env TAJI_ENV_FILE="$ENV_FILE" \
+            TAJI_SMTP_HOST="$SMTP_HOST" \
+            TAJI_SMTP_PORT="$SMTP_PORT" \
+            TAJI_SMTP_TLS="$SMTP_USE_TLS" \
+            TAJI_SMTP_USER="$SMTP_USER" \
+            TAJI_SMTP_PASS="$SMTP_PASS" \
+            TAJI_SMTP_FROM="$SMTP_FROM" \
+        "$ROOT/current/.venv/bin/python" - <<'PYTHON'
+import os
+
+env_path = os.environ["TAJI_ENV_FILE"]
+settings = {
+    "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+    "EMAIL_HOST": os.environ["TAJI_SMTP_HOST"].strip(),
+    "EMAIL_PORT": os.environ["TAJI_SMTP_PORT"].strip(),
+    "EMAIL_USE_TLS": os.environ["TAJI_SMTP_TLS"].strip(),
+    "EMAIL_HOST_USER": os.environ["TAJI_SMTP_USER"].strip(),
+    "EMAIL_HOST_PASSWORD": os.environ["TAJI_SMTP_PASS"],
+    "DEFAULT_FROM_EMAIL": os.environ["TAJI_SMTP_FROM"].strip(),
+}
+
+with open(env_path, encoding="utf-8") as handle:
+    lines = handle.read().splitlines()
+
+# Se reemplazan las claves existentes en su sitio y se agregan las faltantes al
+# final, para no perder el orden ni duplicar entradas.
+out = []
+seen = set()
+for line in lines:
+    key = line.split("=", 1)[0].strip()
+    if key in settings:
+        out.append(f"{key}={settings[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+
+for key, value in settings.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+
+with open(env_path, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(out) + "\n")
+
+print("[OK] Variables guardadas:", ", ".join(sorted(settings)))
+PYTHON
+    ) || fail "No se pudo escribir la configuracion SMTP."
+
+    unset SMTP_PASS
+
+    chown root:taji "$ENV_FILE"
+    chmod 0640 "$ENV_FILE"
+
+    systemctl restart taji
+    echo ""
+    echo -e "${BRIGHT_GREEN}[OK] SMTP configurado. Verificacion del envio:${RESET}"
+    (cd "$ROOT/current" && runuser -u taji -- "$ROOT/current/.venv/bin/python" manage.py shell --settings=config.settings_production <<'PYTHON'
+from django.conf import settings
+from django.core.mail import send_mail
+
+print(f"EMAIL_BACKEND = {settings.EMAIL_BACKEND}")
+print(f"EMAIL_HOST    = {settings.EMAIL_HOST}:{settings.EMAIL_PORT} (TLS={settings.EMAIL_USE_TLS})")
+print(f"Remitente     = {settings.DEFAULT_FROM_EMAIL}")
+
+send_mail(
+    subject="Taji: configuracion de correo correcta",
+    message="Si lees esto, el envio de invitaciones y recuperacion de contrasena funciona.",
+    from_email=settings.DEFAULT_FROM_EMAIL,
+    recipient_list=[settings.EMAIL_HOST_USER],
+    fail_silently=False,
+)
+print("[OK] Correo de prueba enviado a", settings.EMAIL_HOST_USER)
+PYTHON
+    ) || echo -e "${RED}[!] La prueba de envio fallo. Revisa las credenciales y el log:${RESET} journalctl -u taji -n 30 --no-pager"
 }
 
 run_action() {
@@ -401,6 +814,11 @@ run_action() {
 
     if [[ $MODE == "logs" ]]; then
         show_backend_logs
+        return 0
+    fi
+
+    if [[ $MODE == "smtp" || $MODE == "mail" || $MODE == "correo" ]]; then
+        do_configure_smtp
         return 0
     fi
 
@@ -456,11 +874,27 @@ run_action() {
     fi
 
     if [[ $MODE == "backup" ]]; then
-        [[ -f $ENV_FILE ]] || fail "No existe /etc/taji/backend.env."
-        BACKUP_FILE="/var/backups/taji/manual-$(date -u +%Y%m%dT%H%M%SZ).dump"
-        (runuser -u postgres -- pg_dump -Fc taji >"$BACKUP_FILE") &
-        animated_progress_bar $! "Generando respaldo PostgreSQL ($BACKUP_FILE)"
-        echo -e "${BRIGHT_GREEN}[OK] Respaldo creado exitosamente: $BACKUP_FILE${RESET}"
+        do_backup "${2:-}"
+        return 0
+    fi
+
+    if [[ $MODE == "backups-list" || $MODE == "list-backups" ]]; then
+        do_list_backups
+        return 0
+    fi
+
+    if [[ $MODE == "backup-verify" ]]; then
+        do_verify_backup "${2:-}"
+        return 0
+    fi
+
+    if [[ $MODE == "backup-restore" ]]; then
+        do_restore_backup "${2:-}"
+        return 0
+    fi
+
+    if [[ $MODE == "backup-schedule" || $MODE == "schedule-backup" ]]; then
+        do_schedule_backup "${2:-}"
         return 0
     fi
 
@@ -524,6 +958,18 @@ COOKIE_SECURE=True
 SECURE_SSL_REDIRECT=True
 MEDIA_ROOT=/var/lib/taji/media
 CACHE_DIR=/var/cache/taji
+# El envio de correo arranca DESHABILITADO a proposito: sin credenciales SMTP
+# no se puede adivinar ningun remitente valido. El backend de consola acepta
+# el mensaje y lo escribe en el log, asi que Django no falla, pero la
+# invitacion nunca sale. Ejecuta la opcion [12] del menu para activarlo.
+EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+DEFAULT_FROM_EMAIL=Taji <no-reply@taji.app>
+# Bitacora de escaneos QR: tope de codigos desconocidos por guardia y por hora.
+QR_SCAN_UNKNOWN_LOG_LIMIT=30
+QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES=60
+# Destino de los respaldos. Una sola fuente de verdad: la leen el menu, el
+# timer de systemd y deploy/backup_database.py a traves de los settings.
+BACKUP_DIR=/var/backups/taji
 ENV
             chown root:taji "$ENV_FILE"; chmod 0640 "$ENV_FILE"
             unset DB_PASSWORD SECRET FRONTEND_ORIGIN
@@ -670,10 +1116,13 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
     echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
     echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[&] Gestor SaaS: Tenants, Condominios y Roles (config.sh)${RESET}       |"
-    echo -e "|  ${BRIGHT_CYAN}[12]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
+    echo -e "|  ${BRIGHT_CYAN}[12]${RESET} ${WHITE}[@] Configurar Envio de Correo SMTP (Invitaciones)${RESET}               |"
+    echo -e "|  ${BRIGHT_CYAN}[13]${RESET} ${WHITE}[#] Respaldos: Listar / Verificar / Restaurar${RESET}                   |"
+    echo -e "|  ${BRIGHT_CYAN}[14]${RESET} ${WHITE}[~] Respaldos: Configurar el automatico diario${RESET}                  |"
+    echo -e "|  ${BRIGHT_CYAN}[15]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
-    
-    read -p " Selecciona una opcion [1-12]: " CHOICE
+
+    read -p " Selecciona una opcion [1-15]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
@@ -686,7 +1135,10 @@ while true; do
         9) run_action "restart" || true ;;
         10) run_action "logs" || true ;;
         11) run_action "config" || true ;;
-        12) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        12) run_action "smtp" || true ;;
+        13) do_backup_menu || true ;;
+        14) run_action "backup-schedule" || true ;;
+        15) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 

@@ -9,6 +9,7 @@ from .views import (
     RegisterView,
     ResetPasswordView,
 )
+from paquetes.paquete1_usuarios_condominio.cu01_autenticacion.views import ChangePasswordView
 
 app_name = "accounts"
 
@@ -20,4 +21,5 @@ urlpatterns = [
     path("me/", MeView.as_view(), name="me"),
     path("forgot-password/", ForgotPasswordView.as_view(), name="forgot-password"),
     path("reset-password/", ResetPasswordView.as_view(), name="reset-password"),
+    path("change-password/", ChangePasswordView.as_view(), name="change-password"),
 ]

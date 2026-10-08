@@ -3,7 +3,7 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework import status
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APITestCase
 
 from accounts.models import Person, Role
 from condominiums.models import Condominium, Sector, Unit
@@ -388,3 +388,302 @@ class MultiTenantIsolationTests(TestCase):
         membership = TenantMembership.objects.get(user=user, condominium=condo)
         self.assertTrue(membership.is_active)
         self.assertTrue(membership.is_default)
+
+
+class PlatformTenantsViewTests(APITestCase):
+    """
+    Consola global de tenants: listado de solo lectura para el Platform Admin.
+
+    Caso independiente y no una subclase de `MultiTenantIsolationTests`: aquel
+    comparte `setUpTestData` entre todos sus tests y algunos aprovisionan un
+    tercer condominio, lo que haria que los conteos exactos de esta vista no
+    fueran deterministas.
+    """
+
+    LIST_URL = "/api/v1/saas/platform/tenants/"
+    SUMMARY_URL = "/api/v1/saas/platform/tenants/summary/"
+
+    @classmethod
+    def setUpTestData(cls):
+        # Los roles ya los siembra `sync_rbac` en post_migrate, asi que se
+        # recuperan en lugar de crearlos y chocar con el slug unico.
+        cls.role_admin = Role.objects.get(slug="administrador")
+
+        cls.tenant_a = Condominium.objects.create(name="Condominio Taji", status="ACTIVE")
+        cls.tenant_b = Condominium.objects.create(name="Condominio Las Palmas", status="ACTIVE")
+        cls.tenant_c = Condominium.objects.create(name="Complejo En Pausa", status="INACTIVE", is_active=False)
+
+        cls.sector_a = Sector.objects.create(condominium=cls.tenant_a, code="A", name="Torre A")
+        cls.sector_b = Sector.objects.create(condominium=cls.tenant_b, code="B", name="Torre B")
+        Unit.objects.create(sector=cls.sector_a, code="A-101", unit_type=Unit.Type.APARTMENT)
+        Unit.objects.create(sector=cls.sector_a, code="A-102", unit_type=Unit.Type.APARTMENT)
+        Unit.objects.create(sector=cls.sector_b, code="B-201", unit_type=Unit.Type.APARTMENT)
+
+        person_super = Person.objects.create(first_name="Super", last_name="Admin", document_number="9999")
+        cls.superuser = User.objects.create_superuser(
+            email="platform_admin@saas.app", password="Password123!", person=person_super, role=cls.role_admin
+        )
+
+        person_tenant = Person.objects.create(first_name="Admin", last_name="Local", document_number="8888")
+        cls.tenant_admin = User.objects.create_user(
+            email="admin_condo@saas.app",
+            password="Password123!",
+            person=person_tenant,
+            role=cls.role_admin,
+            is_approved=True,
+        )
+        TenantMembership.objects.create(
+            user=cls.tenant_admin,
+            condominium=cls.tenant_a,
+            role=cls.role_admin,
+            is_default=True,
+            is_active=True,
+        )
+
+    def rows(self, response):
+        return response.data.get("results", response.data)
+
+    def by_name(self, response):
+        return {row["name"]: row for row in self.rows(response)}
+
+    # --- acceso ---------------------------------------------------------
+
+    def test_superuser_sees_every_tenant(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.LIST_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = [row["name"] for row in self.rows(response)]
+        self.assertIn("Condominio Taji", names)
+        self.assertIn("Condominio Las Palmas", names)
+        self.assertIn("Complejo En Pausa", names)
+
+    def test_a_tenant_admin_cannot_see_the_platform_console(self):
+        """El listado global no es lo mismo que `saas/tenants/`: exige Platform Admin."""
+        self.client.force_authenticate(user=self.tenant_admin)
+
+        response = self.client.get(self.LIST_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_a_tenant_admin_cannot_read_the_summary_either(self):
+        self.client.force_authenticate(user=self.tenant_admin)
+        self.assertEqual(
+            self.client.get(self.SUMMARY_URL).status_code, status.HTTP_403_FORBIDDEN
+        )
+
+    def test_anonymous_is_rejected(self):
+        response = self.client.get(self.LIST_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_the_endpoint_is_read_only(self):
+        """No debe existir forma de crear o modificar tenants desde aquí."""
+        self.client.force_authenticate(user=self.superuser)
+
+        for method, url in (
+            ("post", self.LIST_URL),
+            ("put", self.LIST_URL),
+            ("patch", self.LIST_URL),
+            ("delete", f"{self.LIST_URL}{self.tenant_a.id}/"),
+        ):
+            response = getattr(self.client, method)(url, {}, format="json")
+            self.assertIn(
+                response.status_code,
+                (status.HTTP_405_METHOD_NOT_ALLOWED, status.HTTP_404_NOT_FOUND),
+                msg=f"{method.upper()} {url} deberia estar bloqueado",
+            )
+
+    # --- contenido ------------------------------------------------------
+
+    def test_each_row_carries_identity_status_and_plan(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.LIST_URL)
+
+        row = self.by_name(response)["Condominio Taji"]
+        self.assertEqual(row["id"], self.tenant_a.id)
+        self.assertEqual(row["status"], "ACTIVE")
+        self.assertTrue(row["is_active"])
+
+        paused = self.by_name(response)["Complejo En Pausa"]
+        self.assertEqual(paused["status"], "INACTIVE")
+        self.assertFalse(paused["is_active"])
+
+    def test_counts_are_computed_across_tenants(self):
+        """Los contadores deben ignorar el aislamiento: es un listado global."""
+        self.client.force_authenticate(user=self.superuser)
+
+        rows = self.by_name(self.client.get(self.LIST_URL))
+
+        self.assertEqual(rows["Condominio Taji"]["sectors_count"], 1)
+        self.assertEqual(rows["Condominio Las Palmas"]["sectors_count"], 1)
+        # Torre A tiene dos unidades y Torre B una.
+        self.assertEqual(rows["Condominio Taji"]["units_count"], 2)
+        self.assertEqual(rows["Condominio Las Palmas"]["units_count"], 1)
+
+    def test_counts_are_not_confused_by_a_superuser_with_a_membership(self):
+        """
+        Regresión del aislamiento.
+
+        `TenantResolver` solo activa el modo global cuando el superusuario no
+        tiene membresías. Un admin de plataforma que además es miembro de un
+        condominio queda con un tenant activo, y si la vista confiara en
+        `TenantContext.is_global()` sus contadores saldrían en cero.
+        """
+        TenantMembership.objects.create(
+            user=self.superuser,
+            condominium=self.tenant_a,
+            role=self.role_admin,
+            is_default=True,
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.superuser)
+
+        rows = self.by_name(self.client.get(self.LIST_URL))
+
+        self.assertEqual(rows["Condominio Taji"]["units_count"], 2)
+        self.assertEqual(rows["Condominio Las Palmas"]["units_count"], 1)
+
+    def test_membership_count_reflects_users_with_access(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        rows = self.by_name(self.client.get(self.LIST_URL))
+
+        self.assertEqual(rows["Condominio Taji"]["users_count"], 1)
+        self.assertEqual(rows["Condominio Las Palmas"]["users_count"], 0)
+
+    def test_a_tenant_without_subscription_is_reported_as_such(self):
+        """No debe confundirse "sin plan" con "plan vencido"."""
+        self.client.force_authenticate(user=self.superuser)
+
+        row = self.by_name(self.client.get(self.LIST_URL))["Condominio Taji"]
+
+        self.assertEqual(row["subscription_status"], "NO_SUBSCRIPTION")
+        self.assertFalse(row["is_subscription_valid"])
+        self.assertIsNone(row["days_left"])
+        self.assertEqual(row["plan_name"], "")
+
+    def test_subscription_details_are_included_when_present(self):
+        from datetime import timedelta
+
+        from django.utils import timezone as dj_timezone
+
+        from tenancy.models import SubscriptionPlan, TenantSubscription
+
+        plan = SubscriptionPlan.objects.create(
+            code="basico", name="Esencial", price_bob=99, max_units=50
+        )
+        TenantSubscription.objects.create(
+            condominium=self.tenant_a,
+            plan=plan,
+            status=TenantSubscription.Status.ACTIVE,
+            current_period_end=dj_timezone.now() + timedelta(days=20),
+        )
+        self.client.force_authenticate(user=self.superuser)
+
+        row = self.by_name(self.client.get(self.LIST_URL))["Condominio Taji"]
+
+        self.assertEqual(row["plan_name"], "Esencial")
+        self.assertEqual(row["subscription_status"], "ACTIVE")
+        self.assertTrue(row["is_subscription_valid"])
+        self.assertGreater(row["days_left"], 0)
+
+    # --- filtros y resumen ----------------------------------------------
+
+    def test_search_filters_by_name(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.LIST_URL, {"search": "Palmas"})
+
+        self.assertEqual([r["name"] for r in self.rows(response)], ["Condominio Las Palmas"])
+
+    def test_filter_by_status(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.LIST_URL, {"status": "INACTIVE"})
+
+        self.assertEqual([r["name"] for r in self.rows(response)], ["Complejo En Pausa"])
+
+    def test_filter_by_subscription_status_without_subscription(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.LIST_URL, {"subscription_status": "NO_SUBSCRIPTION"})
+
+        # Se compara contra la base y no contra un numero fijo: la migracion
+        # `0003_seed_condominium` deja un condominio "Taji" en toda instalacion.
+        self.assertEqual(len(self.rows(response)), Condominium.objects.count())
+
+    def test_summary_totals_are_not_inflated_by_joins(self):
+        """
+        Regresión del fan-out de agregaciones.
+
+        Al calcular totales sobre un queryset que ya tiene varios `Count` en
+        joins distintos, `Count("id")` cuenta una fila por combinacion y el
+        resultado puede superar el numero real de condominios.
+        """
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.SUMMARY_URL)
+
+        self.assertEqual(response.data["tenants"], Condominium.objects.count())
+        self.assertEqual(response.data["active_tenants"], Condominium.objects.filter(is_active=True).count())
+        self.assertEqual(response.data["units"], Unit.objects.count())
+        self.assertEqual(
+            response.data["active_tenants"] + response.data["inactive_tenants"],
+            response.data["tenants"],
+        )
+        self.assertEqual(
+            response.data["with_subscription"] + response.data["without_subscription"],
+            response.data["tenants"],
+        )
+
+    def test_summary_totals_are_global_even_with_an_active_tenant(self):
+        """Un admin con tenant activo debe seguir viendo el total de la plataforma."""
+        TenantMembership.objects.create(
+            user=self.superuser,
+            condominium=self.tenant_a,
+            role=self.role_admin,
+            is_default=True,
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.superuser)
+
+        response = self.client.get(self.SUMMARY_URL)
+
+        self.assertEqual(response.data["units"], Unit.objects.count())
+        self.assertEqual(response.data["tenants"], Condominium.objects.count())
+
+    def test_the_listing_does_not_run_one_query_per_tenant(self):
+        """
+        Los contadores vienen de anotaciones, no de una consulta por condominio.
+
+        Con N tenants, la version ingenua haria 5N+1 consultas. Este test fija
+        un techo para que nadie reintroduzca el N+1 al tocar la vista.
+        """
+        for index in range(6):
+            condo = Condominium.objects.create(name=f"Edificio {index}", status="ACTIVE")
+            sector = Sector.objects.create(condominium=condo, code=f"S{index}", name=f"S{index}")
+            Unit.objects.create(sector=sector, code=f"U{index}", unit_type=Unit.Type.APARTMENT)
+
+        self.client.force_authenticate(user=self.superuser)
+
+        with self.assertNumQueries(4):
+            # 1 resolver la membresia del admin, 1 total para paginar, 1 de
+            # filas con los contadores agregados y 1 de la paginacion. Lo que
+            # importa es que no crezca con el numero de condominios.
+            self.client.get(self.LIST_URL)
+
+    def test_ordering_is_accepted_and_unknown_fields_fall_back(self):
+        self.client.force_authenticate(user=self.superuser)
+
+        ok = self.client.get(self.LIST_URL, {"ordering": "-name"})
+        self.assertEqual(ok.status_code, status.HTTP_200_OK)
+        names = [r["name"] for r in self.rows(ok)]
+        self.assertEqual(names, sorted(names, reverse=True))
+
+        # Un campo no permitido no debe inyectar SQL ni romper la consulta.
+        fallback = self.client.get(self.LIST_URL, {"ordering": "password"})
+        self.assertEqual(fallback.status_code, status.HTTP_200_OK)
+        fallback_names = [r["name"] for r in self.rows(fallback)]
+        self.assertEqual(fallback_names, sorted(fallback_names))

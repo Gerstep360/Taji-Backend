@@ -156,7 +156,13 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "login": "10/min",
         "register": "5/hour",
-        "password_reset": "5/hour",
+        # Recuperar contraseña y activarla van en scopes separados. Compartían
+        # `password_reset` (5/hora), así que pedir la recuperación consumía la
+        # cuota de las activaciones de los demás, y detrás del proxy Nginx esa
+        # cuota era por IP compartida: con el WiFi del condominio, el sexto
+        # residente recibía 429 al activar su cuenta.
+        "password_reset_request": "10/hour",
+        "password_reset": "20/hour",
         "token_refresh": "30/min",
     },
 }
@@ -187,6 +193,12 @@ VISIT_QR_MIN_TTL_MINUTES = env.int("VISIT_QR_MIN_TTL_MINUTES", default=5)
 # Corrección de errores del símbolo QR: "low" | "medium" | "quartile" | "high".
 VISIT_QR_ECC = env("VISIT_QR_ECC", default="medium")
 VISIT_QR_IMAGE_SCALE = env.int("VISIT_QR_IMAGE_SCALE", default=6)
+# Bitácora de escaneos: tope de códigos QR desconocidos que se persisten por
+# guardia dentro de la ventana. Superado el tope, el veredicto se sigue
+# devolviendo pero el intento no crea una fila (evita que una cadena aleatoria
+# llene la tabla). Los escaneos sobre QR reales nunca se omiten.
+QR_SCAN_UNKNOWN_LOG_LIMIT = env.int("QR_SCAN_UNKNOWN_LOG_LIMIT", default=30)
+QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES = env.int("QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES", default=60)
 
 EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Taji <no-reply@taji.app>")

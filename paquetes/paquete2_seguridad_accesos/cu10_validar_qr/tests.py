@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from django.test import override_settings
 from django.urls import resolve, reverse
 from django.utils import timezone
 from rest_framework import status
@@ -10,7 +11,7 @@ from rest_framework.test import APITestCase
 from accounts.models import Person, Role, SystemPermission, User
 from auditlog.models import AuditEvent
 from condominiums.models import Condominium, Resident, ResidentUnit, Sector, Staff, Unit
-from security.models import AccessEvent, VisitAuthorization
+from security.models import AccessEvent, VisitAuthorization, VisitQrScan
 from security.qr import issue_visit_qr
 
 
@@ -475,6 +476,207 @@ class VisitQrValidationAuditTests(VisitQrValidationBaseTestCase):
                 resource_id=str(authorization.pk),
             ).exists()
         )
+
+
+class VisitQrScanLogTests(VisitQrValidationBaseTestCase):
+    """
+    Bitácora de escaneos: todo intento queda registrado, incluidos los QR
+    desconocidos que en `AccessEvent` no dejan rastro.
+    """
+
+    UNKNOWN_PAYLOAD = "TAJI1." + "1" * 32 + "." + "b" * 32
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.user_guard)
+
+    def test_approved_scan_is_logged_as_valid(self):
+        authorization = self.make_authorization()
+        payload = self.issued_token(authorization)
+
+        response = self.client.post(self.validate_url, {"token": payload}, format="json")
+
+        scan = VisitQrScan.objects.get(id=response.data["scan"]["id"])
+        self.assertEqual(scan.result, VisitQrScan.Result.VALID)
+        self.assertEqual(scan.reason, "VALID")
+        self.assertEqual(scan.guard_staff_id, self.guard.id)
+        self.assertEqual(scan.authorization_id, authorization.pk)
+        self.assertEqual(scan.visitor_name, "Mario Gómez")
+
+    def test_denied_scan_is_logged_as_rejected_with_reason(self):
+        """El motivo queda en una columna consultable, no truncado en `notes`."""
+        authorization = self.make_authorization()
+        payload = self.issued_token(authorization)
+        VisitAuthorization.objects.filter(pk=authorization.pk).update(
+            status=VisitAuthorization.Status.CANCELLED
+        )
+
+        response = self.client.post(self.validate_url, {"token": payload}, format="json")
+
+        scan = VisitQrScan.objects.get(id=response.data["scan"]["id"])
+        self.assertEqual(scan.result, VisitQrScan.Result.REJECTED)
+        self.assertEqual(scan.reason, "VISIT_CANCELLED")
+
+    def test_unknown_token_is_logged_even_though_no_access_event_is_created(self):
+        """Es el caso que motivó la bitácora: el intento fallido sí debe quedar."""
+        before = AccessEvent.objects.count()
+
+        response = self.client.post(self.validate_url, {"token": self.UNKNOWN_PAYLOAD}, format="json")
+
+        self.assertFalse(response.data["valid"])
+        self.assertIsNone(response.data["access_event"])
+        self.assertEqual(AccessEvent.objects.count(), before)
+
+        scan = VisitQrScan.objects.get(id=response.data["scan"]["id"])
+        self.assertEqual(scan.result, VisitQrScan.Result.NOT_FOUND)
+        self.assertEqual(scan.reason, "NOT_FOUND")
+        self.assertIsNone(scan.authorization)
+
+    def test_scanned_token_is_never_stored_in_clear(self):
+        self.client.post(self.validate_url, {"token": self.UNKNOWN_PAYLOAD}, format="json")
+
+        scan = VisitQrScan.objects.get()
+        self.assertNotIn("b" * 32, scan.scanned_token_hash)
+        self.assertEqual(len(scan.scanned_token_hash), 64)
+
+    def test_device_and_ip_are_recorded_for_audit(self):
+        self.client.post(
+            self.validate_url,
+            {"token": self.UNKNOWN_PAYLOAD, "device_id": "tablet-porteria-1"},
+            format="json",
+            REMOTE_ADDR="10.0.0.9",
+            HTTP_X_FORWARDED_FOR="203.0.113.7, 10.0.0.9",
+        )
+
+        scan = VisitQrScan.objects.get()
+        self.assertEqual(scan.device_id, "tablet-porteria-1")
+        # Detrás de nginx la IP real es la primera de X-Forwarded-For.
+        self.assertEqual(scan.ip_address, "203.0.113.7")
+
+    @override_settings(QR_SCAN_UNKNOWN_LOG_LIMIT=2, QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES=60)
+    def test_unknown_token_flood_is_capped_per_guard(self):
+        """Un código aleatorio repetido no puede llenar la tabla."""
+        for _ in range(2):
+            self.client.post(self.validate_url, {"token": self.UNKNOWN_PAYLOAD}, format="json")
+
+        response = self.client.post(self.validate_url, {"token": self.UNKNOWN_PAYLOAD}, format="json")
+
+        self.assertFalse(response.data["valid"])
+        self.assertIsNone(response.data["scan"])
+        self.assertEqual(VisitQrScan.objects.count(), 2)
+
+    @override_settings(QR_SCAN_UNKNOWN_LOG_LIMIT=1, QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES=60)
+    def test_cap_on_unknown_tokens_never_blocks_a_real_qr(self):
+        """El tope solo aplica a códigos desconocidos: un QR real siempre se registra."""
+        self.client.post(self.validate_url, {"token": self.UNKNOWN_PAYLOAD}, format="json")
+
+        authorization = self.make_authorization()
+        payload = self.issued_token(authorization)
+        response = self.client.post(self.validate_url, {"token": payload}, format="json")
+
+        self.assertTrue(response.data["valid"])
+        self.assertIsNotNone(response.data["scan"])
+
+
+class VisitQrScanHistoryTests(VisitQrValidationBaseTestCase):
+    """Historial paginado con totales de la portería."""
+
+    def setUp(self):
+        super().setUp()
+        self.history_url = reverse("visit-qr-scan-history")
+        self.client.force_authenticate(self.user_guard)
+
+    def _scan(self, token, device_id=""):
+        return self.client.post(
+            self.validate_url, {"token": token, "device_id": device_id}, format="json"
+        )
+
+    def _seed_mixed_history(self):
+        approved = self.make_authorization("Ana Torres", "8800001")
+        self._scan(self.issued_token(approved))
+
+        denied = self.make_authorization("Luis Paz", "8800002")
+        VisitAuthorization.objects.filter(pk=denied.pk).update(
+            status=VisitAuthorization.Status.CANCELLED
+        )
+        self._scan(self.issued_token(denied))
+
+        self._scan("TAJI1." + "2" * 32 + "." + "c" * 32)
+
+    def test_history_returns_totals_and_rows(self):
+        self._seed_mixed_history()
+
+        response = self.client.get(self.history_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        body = response.data
+        self.assertEqual(body["count"], 3)
+        self.assertEqual(body["summary"]["total"], 3)
+        self.assertEqual(body["summary"]["approved"], 1)
+        self.assertEqual(body["summary"]["rejected"], 1)
+        self.assertEqual(body["summary"]["not_found"], 1)
+        self.assertEqual(body["summary"]["failed"], 2)
+        self.assertEqual(len(body["results"]), 3)
+
+    def test_history_can_filter_by_result(self):
+        self._seed_mixed_history()
+
+        response = self.client.get(self.history_url, {"result": "NOT_FOUND"})
+
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["reason"], "NOT_FOUND")
+        self.assertEqual(response.data["summary"]["approved"], 0)
+
+    def test_history_search_matches_visitor_name(self):
+        self._seed_mixed_history()
+
+        response = self.client.get(self.history_url, {"search": "Ana"})
+
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["visitor_name"], "Ana Torres")
+
+    def test_history_is_ordered_most_recent_first(self):
+        self._seed_mixed_history()
+
+        response = self.client.get(self.history_url)
+
+        occurred = [row["occurred_at"] for row in response.data["results"]]
+        self.assertEqual(occurred, sorted(occurred, reverse=True))
+
+    def test_history_respects_pagination(self):
+        for index in range(5):
+            self._scan("TAJI1." + f"{index:x}" * 32 + "." + "d" * 32)
+
+        response = self.client.get(self.history_url, {"page_size": 2, "page": 2})
+
+        self.assertEqual(response.data["page_size"], 2)
+        self.assertEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["total_pages"], 3)
+
+    def test_history_ignores_invalid_pagination_instead_of_failing(self):
+        response = self.client.get(self.history_url, {"page": "abc", "page_size": "abc"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["page"], 1)
+
+    def test_resident_cannot_read_the_scan_history(self):
+        self.client.force_authenticate(self.user_resident)
+        response = self.client.get(self.history_url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_anonymous_cannot_read_the_scan_history(self):
+        self.client.force_authenticate(None)
+        response = self.client.get(self.history_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_guards_endpoint_lists_only_guards_with_scans(self):
+        self._seed_mixed_history()
+
+        response = self.client.get(reverse("visit-qr-scan-guards"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["full_name"], "Luis Roca")
 
 
 class VisitQrValidationAccessControlTests(VisitQrValidationBaseTestCase):

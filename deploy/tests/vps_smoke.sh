@@ -100,6 +100,14 @@ if systemctl is-active --quiet taji; then
   exit 1
 fi
 [[ $(cat /opt/taji/current/.release-sha) == "$RECOVERY_SHA" ]]
+# El respaldo previo a migrar debe existir Y ser utilizable. Contar dumps en
+# general no alcanza: si esa copia falla en silencio, los respaldos de despliegues
+# anteriores mantienen el total por encima del minimo y la comprobacion pasa
+# mientras la migracion avanza sin red de seguridad.
+[[ -n $(find /var/backups/taji -maxdepth 1 -name 'premigrate-*.dump' -print -quit) ]]
+LATEST_PREMIGRATE=$(find /var/backups/taji -maxdepth 1 -name 'premigrate-*.dump' -printf '%T@ %p\n' | sort -rn | head -n 1 | cut -d' ' -f2-)
+[[ -n $LATEST_PREMIGRATE ]]
+pg_restore --list "$LATEST_PREMIGRATE" >/dev/null
 BACKUP_COUNT=$(find /var/backups/taji -maxdepth 1 -name '*.dump' | wc -l)
 [[ $BACKUP_COUNT -ge 3 ]]
-echo 'VPS smoke OK: instalación, HTTPS, actualización, no-op, recuperación y parada segura.'
+echo 'VPS smoke OK: instalación, HTTPS, actualización, no-op, recuperación, respaldo previo a migrar y parada segura.'

@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import logging
 import re
 import secrets
 import uuid as uuid_module
@@ -36,7 +37,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .models import AccessEvent, VisitAuthorization
+from .models import AccessEvent, VisitAuthorization, VisitQrScan
 
 # Versión del esquema contenido en el QR. Permite evolucionar el formato
 # manteniendo la compatibilidad con los QR ya emitidos.
@@ -48,6 +49,8 @@ QR_IMAGE_FORMATS = ("svg", "png")
 _QR_PAYLOAD_RE = re.compile(
     r"^TAJI(?P<version>\d+)\.(?P<uuid>[0-9a-f]{32})\.(?P<token>[A-Za-z0-9_-]{16,128})$"
 )
+
+logger = logging.getLogger("taji.security.qr")
 
 # Parámetros de URL aceptados cuando el QR apunta a un deep link del aplicativo.
 _DEEPLINK_PARAMS = ("code", "token", "v", "taji")
@@ -563,6 +566,124 @@ def expire_stale_authorizations(at: datetime | None = None) -> int:
     ).update(status=VisitAuthorization.Status.EXPIRED)
 
 
+# ---------------------------------------------------------------------------
+# Bitácora de escaneos (historial de la portería)
+# ---------------------------------------------------------------------------
+
+
+def _unknown_scan_budget_exhausted(*, guard_staff, user, ip_address, now: datetime) -> bool:
+    """
+    Decide si un escaneo de código desconocido debe omitirse de la bitácora.
+
+    Registrar todo es justamente lo que permite detectar un abuso, pero una
+    cadena aleatoria escaneada miles de veces llenaría la tabla. Se acepta un
+    máximo de códigos desconocidos por actor dentro de la ventana y, superado
+    ese tope, se siguen contando pero sin crear una fila por intento.
+
+    Un escaneo sobre un QR real nunca se omite: ese es justamente el registro
+    que la seguridad necesita.
+    """
+    limit = int(getattr(settings, "QR_SCAN_UNKNOWN_LOG_LIMIT", 30))
+    window = timezone.timedelta(minutes=int(getattr(settings, "QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES", 60)))
+    if limit <= 0:
+        return True
+
+    recent = VisitQrScan.objects.filter(result=VisitQrScan.Result.NOT_FOUND, occurred_at__gte=now - window)
+    if guard_staff is not None:
+        actor_filter = recent.filter(guard_staff=guard_staff)
+    elif user is not None:
+        actor_filter = recent.filter(scanned_by_user=user)
+    elif ip_address:
+        actor_filter = recent.filter(ip_address=ip_address)
+    else:
+        # Sin actor identificable no hay forma de acotar el volumen.
+        return True
+
+    return actor_filter.count() >= limit
+
+
+def register_scan_log(
+    evaluation: QrEvaluation,
+    *,
+    scanned_value: str = "",
+    access_event=None,
+    guard_staff=None,
+    user=None,
+    device_id: str = "",
+    ip_address: str | None = None,
+    notes: str = "",
+    at: datetime | None = None,
+):
+    """
+    Persiste el escaneo en la bitácora `VisitQrScan`.
+
+    A diferencia de `register_access_event`, aquí **se registra también el
+    escaneo de un código QR desconocido**: son los intentos fallidos que la
+    portería necesita contabilizar. El texto capturado no se guarda, solo su
+    SHA-256.
+
+    Devuelve la fila creada o ``None`` si el intento se omitió por superar el
+    tope de códigos desconocidos. La omisión nunca cambia el veredicto que ve
+    el guardia.
+    """
+    now = at or timezone.now()
+    authorization = evaluation.authorization
+    is_unknown = authorization is None and not evaluation.approved
+
+    if is_unknown and _unknown_scan_budget_exhausted(
+        guard_staff=guard_staff, user=user, ip_address=ip_address, now=now
+    ):
+        logger.warning(
+            "Escaneo de código QR desconocido omitido de la bitácora: tope por actor alcanzado."
+        )
+        return None
+
+    if evaluation.approved:
+        result = VisitQrScan.Result.VALID
+    elif is_unknown:
+        result = VisitQrScan.Result.NOT_FOUND
+    else:
+        result = VisitQrScan.Result.REJECTED
+
+    visitor = authorization.visitor_person if authorization else None
+
+    return VisitQrScan.objects.create(
+        authorization=authorization,
+        access_event=access_event,
+        guard_staff=guard_staff,
+        scanned_by_user=user if (user and getattr(user, "is_authenticated", False)) else None,
+        result=result,
+        reason=evaluation.reason,
+        message=(evaluation.message or "")[:300],
+        scanned_token_hash=hash_token(scanned_value) if scanned_value else "",
+        visitor_name=(visitor.full_name if visitor else "")[:220],
+        visitor_document_number=(visitor.document_number or "")[:30] if visitor else "",
+        device_id=(device_id or "")[:120],
+        ip_address=ip_address or None,
+        notes=(notes or "")[:300],
+        occurred_at=now,
+    )
+
+
+def summarize_scans(queryset) -> dict:
+    """Totales de la bitácora para los tableros de la portería."""
+    from django.db.models import Count
+
+    counts = {row["result"]: row["total"] for row in queryset.values("result").annotate(total=Count("id"))}
+    total = sum(counts.values())
+    approved = counts.get(VisitQrScan.Result.VALID, 0)
+    rejected = counts.get(VisitQrScan.Result.REJECTED, 0)
+    unknown = counts.get(VisitQrScan.Result.NOT_FOUND, 0)
+    return {
+        "total": total,
+        "approved": approved,
+        "rejected": rejected,
+        "not_found": unknown,
+        "failed": rejected + unknown,
+        "success_rate": round((approved / total) * 100, 1) if total else 0.0,
+    }
+
+
 __all__ = [
     "QR_IMAGE_FORMATS",
     "QR_PAYLOAD_PREFIX",
@@ -580,7 +701,9 @@ __all__ = [
     "normalize_scanned_value",
     "parse_payload",
     "register_access_event",
+    "register_scan_log",
     "render_qr_image",
     "resolve_authorization",
+    "summarize_scans",
     "validate_scanned_qr",
 ]
