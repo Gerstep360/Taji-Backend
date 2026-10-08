@@ -146,6 +146,26 @@ resolve_backup_dir() {
     echo "${configured:-$BACKUP_DIR}"
 }
 
+# Resuelve el dominio con el que se responde la API, para los mensajes finales.
+#
+# `DOMAIN` solo se define dentro de la instalacion (opcion [1], que lo pregunta
+# al operador). Las opciones [2] en adelante nunca lo definen, y como el script
+# corre con `set -u`, leerlo ahi abortaba el despliegue JUSTO DESPUES de imprimir
+# "DESPLIEGUE COMPLETADO": el mensaje de exito se mostraba y acto seguido el
+# script moria con "DOMAIN: unbound variable".
+#
+# Se lee de `ALLOWED_HOSTS`, que es donde la instalacion ya guardo ese valor.
+# Se usa `sed` y no `source`, por el motivo descrito en `resolve_backup_dir`.
+resolve_domain() {
+    local hosts=""
+    if [[ -f $ENV_FILE ]]; then
+        hosts=$(sed -n 's/^ALLOWED_HOSTS=//p' "$ENV_FILE" | tail -n 1 | tr -d '"'"'"' \r')
+    fi
+    local first
+    first=$(printf '%s' "$hosts" | cut -d, -f1)
+    printf '%s' "${first:-localhost}"
+}
+
 # Ejecuta el CLI de respaldos con el entorno del servidor.
 #
 # No se exporta el env a mano: `config.settings_production` ya lee
@@ -622,7 +642,7 @@ do_deploy_backend() {
         echo -e "\n${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
         echo -e "${BRIGHT_GREEN}|   DESPLIEGUE DEL BACKEND COMPLETADO EXITOSAMENTE CON ZERO-DOWNTIME!    |${RESET}"
         echo -e "${BRIGHT_GREEN}+------------------------------------------------------------------------+${RESET}"
-        echo -e " Backend API: ${BRIGHT_CYAN}http://$DOMAIN/api/v1/${RESET}"
+        echo -e " Backend API: ${BRIGHT_CYAN}http://$(resolve_domain)/api/v1/${RESET}"
         echo -e " Commit SHA:  ${BRIGHT_MAGENTA}$SHA${RESET}\n"
     else
         echo -e "${RED}[ERROR] El servidor Django no respondio despues del reinicio.${RESET}"

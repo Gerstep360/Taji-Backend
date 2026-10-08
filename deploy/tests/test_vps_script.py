@@ -124,6 +124,33 @@ class PreMigrationBackupTests(SimpleTestCase):
             )
 
 
+class InstallerOnlyVariablesTests(SimpleTestCase):
+    """
+    `DOMAIN`, `EMAIL` y `FRONTEND` los pregunta la instalacion (opcion [1]) y no
+    existen en el resto del menu. El script corre con `set -u`, asi que leerlos
+    desde otra opcion no produce un valor vacio: mata el proceso.
+    """
+
+    def setUp(self):
+        self.source = VPS_SH.read_text(encoding="utf-8")
+
+    def test_the_update_deploy_does_not_read_the_installer_domain(self):
+        """Este fue un fallo real: el despliegue moria tras imprimir el exito."""
+        body = _function_body(self.source, "do_deploy_backend")
+
+        self.assertNotIn("$DOMAIN", body)
+        self.assertNotIn("${DOMAIN", body)
+        self.assertIn("resolve_domain", body)
+
+    def test_the_domain_is_resolved_from_the_server_env_file(self):
+        """No puede depender de una variable que solo existe al instalar."""
+        resolver = _function_body(self.source, "resolve_domain")
+
+        self.assertIn("ALLOWED_HOSTS", resolver)
+        # `${first:-localhost}` evita que un env incompleto reintroduzca el fallo.
+        self.assertIn(":-localhost", resolver)
+
+
 class DatabaseConnectionTests(SimpleTestCase):
     def test_connection_health_checks_are_enabled_in_production(self):
         """
