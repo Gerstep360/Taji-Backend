@@ -5,6 +5,8 @@ from django.db import transaction
 from rest_framework import serializers
 from accounts.models import Person, Role, User
 from condominiums.models import Staff
+from tenancy.context import TenantContext
+from tenancy.models import TenantMembership
 
 
 STAFF_ROLE_BY_TYPE = {
@@ -289,6 +291,9 @@ class StaffSerializer(serializers.ModelSerializer):
             person_data["contact_email"] = access_email.strip().lower()
 
         person = Person.objects.create(**person_data)
+        tenant = TenantContext.get_current_tenant()
+        if tenant:
+            validated_data["condominium"] = tenant
         staff = Staff.objects.create(person=person, **validated_data)
         staff.employee_code = self._generated_employee_code(staff.pk)
         staff.save(update_fields=("employee_code",))
@@ -318,6 +323,7 @@ class StaffSerializer(serializers.ModelSerializer):
                     is_active=True,
                 )
 
+        self._sync_tenant_membership(staff)
         return staff
 
     @transaction.atomic
@@ -389,7 +395,25 @@ class StaffSerializer(serializers.ModelSerializer):
                     updated_fields.append("password")
                 if updated_fields:
                     user.save()
+        self._sync_tenant_membership(instance)
         return instance
+
+    @staticmethod
+    def _sync_tenant_membership(staff):
+        if not staff.condominium_id:
+            return
+        user = User.objects.filter(person_id=staff.person_id).first()
+        if not user:
+            return
+        membership, created = TenantMembership.objects.get_or_create(
+            user=user, condominium_id=staff.condominium_id,
+            defaults={"role": user.role, "is_active": user.is_active,
+                      "is_default": not user.tenant_memberships.filter(is_active=True).exists()},
+        )
+        if not created:
+            membership.role = user.role
+            membership.is_active = user.is_active
+            membership.save(update_fields=["role", "is_active"])
 
     def get_has_user_account(self, obj) -> bool:
         return self._person_has_user(obj.person)

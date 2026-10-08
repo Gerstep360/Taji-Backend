@@ -20,6 +20,7 @@ from security.models import SecurityShift
 from .permissions import CanManageSecurityShifts, is_admin_or_management, is_security_guard
 from .serializers import SecurityShiftSerializer, ShiftActionSerializer
 from .timing import EARLY_START_MINUTES, closing_timing, start_block_reason
+from .tenancy import HasSecurityTenant, tenant_shifts
 
 
 @extend_schema_view(
@@ -55,7 +56,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = SecurityShiftSerializer
-    permission_classes = [IsAuthenticated, CanManageSecurityShifts]
+    permission_classes = [IsAuthenticated, HasSecurityTenant, CanManageSecurityShifts]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ("scheduled_start", "scheduled_end", "created_at", "status")
     ordering = ("-scheduled_start",)
@@ -63,18 +64,11 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        queryset = SecurityShift.objects.select_related(
+        queryset = tenant_shifts().select_related(
             "guard_staff__person",
             "condominium",
             "created_by_user",
         )
-
-        from tenancy.context import TenantContext
-        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
-        if tenant and not TenantContext.is_global():
-            queryset = queryset.filter(
-                Q(condominium=tenant) | Q(guard_staff__condominium=tenant)
-            )
 
         is_admin = is_admin_or_management(user)
 
@@ -120,17 +114,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
         if not is_admin_or_management(user):
             raise PermissionDenied("Solo el administrador puede programar turnos de seguridad.")
 
-        from tenancy.context import TenantContext
-        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
-        save_kwargs = {"created_by_user": user}
-        if tenant and not TenantContext.is_global() and not serializer.validated_data.get("condominium"):
-            save_kwargs["condominium"] = tenant
-        elif not serializer.validated_data.get("condominium"):
-            guard_staff = serializer.validated_data.get("guard_staff")
-            if guard_staff and getattr(guard_staff, "condominium", None):
-                save_kwargs["condominium"] = guard_staff.condominium
-
-        shift = serializer.save(**save_kwargs)
+        shift = serializer.save(created_by_user=user)
         record_audit_event(
             action_code="SECURITY_SHIFT_CREATED",
             resource_type="SecurityShift",
@@ -256,9 +240,9 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             # Serializar las operaciones de apertura del mismo guardia.
             Staff.objects.select_for_update().get(pk=shift.guard_staff_id)
-            shift = SecurityShift.objects.select_for_update().get(pk=shift.pk)
+            shift = tenant_shifts().select_for_update().get(pk=shift.pk)
             now = timezone.now()
-            other_id = SecurityShift.objects.filter(
+            other_id = tenant_shifts().filter(
                 guard_staff_id=shift.guard_staff_id, status=SecurityShift.Status.OPEN
             ).exclude(pk=shift.pk).values_list("id", flat=True).first()
             reason = start_block_reason(shift, now, other_id)
@@ -315,7 +299,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             Staff.objects.select_for_update().get(pk=shift.guard_staff_id)
-            shift = SecurityShift.objects.select_for_update().get(pk=shift.pk)
+            shift = tenant_shifts().select_for_update().get(pk=shift.pk)
             if shift.status != SecurityShift.Status.OPEN:
                 raise ValidationError({"detail": "Solo se puede cerrar un turno que esté EN_CURSO (iniciado)."})
             now = timezone.now()
@@ -407,18 +391,18 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
             # Para administrador: se puede filtrar por ?guard_id=
             guard_id = request.query_params.get("guard", "").strip() or request.query_params.get("guard_staff", "").strip()
             if guard_id:
-                active_shift = SecurityShift.objects.filter(
+                active_shift = tenant_shifts().filter(
                     guard_staff_id=guard_id, status=SecurityShift.Status.OPEN
                 ).first()
                 if not active_shift:
-                    active_shift = SecurityShift.objects.filter(
+                    active_shift = tenant_shifts().filter(
                         guard_staff_id=guard_id,
                         status=SecurityShift.Status.SCHEDULED,
                         scheduled_start__lte=timezone.now(),
                         scheduled_end__gte=timezone.now(),
                     ).first()
             else:
-                active_shift = SecurityShift.objects.filter(status=SecurityShift.Status.OPEN).first()
+                active_shift = tenant_shifts().filter(status=SecurityShift.Status.OPEN).first()
 
             if not active_shift:
                 return Response({"shift": None, "message": "No hay ningún turno activo en este momento."}, status=status.HTTP_200_OK)
@@ -433,14 +417,14 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
             return Response({"shift": None, "message": "El usuario no está registrado como personal de seguridad."}, status=status.HTTP_200_OK)
 
         # 1. Buscar turno EN_CURSO
-        active_shift = SecurityShift.objects.filter(
+        active_shift = tenant_shifts().filter(
             guard_staff=guard_staff, status=SecurityShift.Status.OPEN
         ).first()
 
         # 2. Turno vigente o dentro de la tolerancia de apertura, incluso si cruza medianoche.
         if not active_shift:
             now = timezone.now()
-            active_shift = SecurityShift.objects.filter(
+            active_shift = tenant_shifts().filter(
                 guard_staff=guard_staff,
                 status=SecurityShift.Status.SCHEDULED,
                 scheduled_start__lte=now + timedelta(minutes=EARLY_START_MINUTES),
@@ -449,7 +433,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
 
         # 3. Si tampoco hay dentro del rango exacto, tomar el más cercano próximo programado para hoy
         if not active_shift:
-            active_shift = SecurityShift.objects.filter(
+            active_shift = tenant_shifts().filter(
                 guard_staff=guard_staff,
                 status=SecurityShift.Status.SCHEDULED,
                 scheduled_start__date=timezone.localdate(),
@@ -458,7 +442,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
 
         # 4. Mostrar el último turno de hoy sin iniciar si no hay uno vigente o próximo.
         if not active_shift:
-            active_shift = SecurityShift.objects.filter(
+            active_shift = tenant_shifts().filter(
                 guard_staff=guard_staff,
                 status=SecurityShift.Status.SCHEDULED,
                 scheduled_end__date=timezone.localdate(),
@@ -480,7 +464,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
     def proximos(self, request):
         user = request.user
         now = timezone.now()
-        queryset = SecurityShift.objects.filter(
+        queryset = tenant_shifts().filter(
             status=SecurityShift.Status.SCHEDULED,
             scheduled_start__gte=now,
         ).order_by("scheduled_start")
@@ -516,7 +500,7 @@ class SecurityShiftViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="historial")
     def historial(self, request):
         user = request.user
-        queryset = SecurityShift.objects.filter(
+        queryset = tenant_shifts().filter(
             Q(status__in=[SecurityShift.Status.CLOSED, SecurityShift.Status.CANCELLED])
             | Q(status=SecurityShift.Status.SCHEDULED, scheduled_end__lte=timezone.now())
         ).order_by("-scheduled_start")

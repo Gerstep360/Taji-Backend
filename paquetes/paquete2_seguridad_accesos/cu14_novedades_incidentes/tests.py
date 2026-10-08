@@ -5,6 +5,7 @@ from accounts.models import Person, Role, User
 from auditlog.models import AuditEvent
 from condominiums.models import Condominium, Staff
 from security.models import SecurityShift, ShiftLogEntry
+from tenancy.models import TenantMembership
 
 
 class ShiftLogTests(APITestCase):
@@ -20,6 +21,13 @@ class ShiftLogTests(APITestCase):
         cls.other_staff = Staff.objects.create(person=cls.other.person, staff_type="SECURITY", status="ACTIVE")
         cls.condo = Condominium.objects.create(name="Bosque")
         cls.other_condo = Condominium.objects.create(name="Flores")
+        for user, condo in ((cls.admin, cls.condo), (cls.guard, cls.condo),
+                            (cls.other, cls.other_condo), (cls.resident, cls.condo)):
+            TenantMembership.objects.create(user=user, condominium=condo, role=user.role, is_default=True)
+        cls.staff.condominium = cls.condo
+        cls.staff.save()
+        cls.other_staff.condominium = cls.other_condo
+        cls.other_staff.save()
         now = timezone.now()
         cls.shift = SecurityShift.objects.create(guard_staff=cls.staff, condominium=cls.condo,
             status="OPEN", scheduled_start=now-timedelta(hours=10), scheduled_end=now-timedelta(hours=2), opened_at=now-timedelta(hours=10))
@@ -75,7 +83,9 @@ class ShiftLogTests(APITestCase):
         self.login(self.admin)
         response = self.client.get(self.url, {"entry_type": "ALERT", "severity": "HIGH", "guard": self.other_staff.pk,
             "shift": self.other_shift.pk, "condominium": self.other_condo.pk, "search": "abierta"})
-        self.assertEqual([item["id"] for item in response.data["results"]], [self.other_entry.pk])
+        self.assertEqual(response.data["results"], [])
+        own = self.client.get(self.url, {"guard": self.staff.pk, "search": "Revisión"})
+        self.assertEqual([item["id"] for item in own.data["results"]], [self.entry.pk])
         self.assertEqual(self.client.post(self.url, self.payload(), format="json").status_code, 403)
 
     def test_no_open_shift_blocks_registration(self):
@@ -138,4 +148,4 @@ class ShiftLogTests(APITestCase):
         today = timezone.localdate().isoformat()
         response = self.client.get("/api/v1/paquete2/novedades-turno/", {"date_from": today, "date_to": today})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["pagination"]["total_items"], 2)
+        self.assertEqual(response.data["pagination"]["total_items"], 1)

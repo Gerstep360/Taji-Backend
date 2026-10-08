@@ -15,6 +15,7 @@ from auditlog.services import record_audit_event
 from condominiums.models import Staff
 from security.models import SecurityShift, ShiftHandover
 from ..cu13_turnos_seguridad.permissions import is_admin_or_management, is_security_guard
+from ..cu13_turnos_seguridad.tenancy import HasSecurityTenant, tenant_shifts
 from ..cu13_turnos_seguridad.serializers import SecurityShiftSerializer
 from .serializers import CandidateQuerySerializer, DeliverySerializer, HandoverQuerySerializer, HandoverSerializer
 
@@ -24,7 +25,7 @@ RELAY_TOLERANCE = timedelta(minutes=15)
 def relay_candidates(outgoing):
     if not outgoing.condominium_id:
         return SecurityShift.objects.none()
-    return SecurityShift.objects.filter(
+    return tenant_shifts().filter(
         condominium_id=outgoing.condominium_id, guard_staff__status=Staff.Status.ACTIVE,
         guard_staff__staff_type=Staff.Type.SECURITY,
         status__in=[SecurityShift.Status.SCHEDULED, SecurityShift.Status.OPEN],
@@ -56,7 +57,7 @@ class CanAccessHandovers(BasePermission):
 @method_decorator(never_cache, name="dispatch")
 class HandoverViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     serializer_class = HandoverSerializer
-    permission_classes = [IsAuthenticated, CanAccessHandovers]
+    permission_classes = [IsAuthenticated, HasSecurityTenant, CanAccessHandovers]
     lookup_value_regex = "[0-9]+"
 
     def get_queryset(self):
@@ -65,13 +66,7 @@ class HandoverViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
             "outgoing_shift__condominium", "incoming_shift__condominium",
         ).order_by("-delivered_at", "-id")
 
-        from tenancy.context import TenantContext
-        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
-        if tenant and not TenantContext.is_global():
-            qs = qs.filter(
-                Q(outgoing_shift__condominium=tenant) | Q(incoming_shift__condominium=tenant)
-                | Q(outgoing_shift__guard_staff__condominium=tenant)
-            )
+        qs = qs.filter(outgoing_shift__in=tenant_shifts(), incoming_shift__in=tenant_shifts())
 
         user = self.request.user
         if not is_admin_or_management(user):
@@ -102,7 +97,7 @@ class HandoverViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
         query = CandidateQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
         staff = self.active_staff()
-        outgoing = get_object_or_404(SecurityShift, pk=query.validated_data["outgoing_shift"], guard_staff=staff)
+        outgoing = get_object_or_404(tenant_shifts(), pk=query.validated_data["outgoing_shift"], guard_staff=staff)
         if outgoing.status != SecurityShift.Status.OPEN:
             raise ValidationError({"outgoing_shift": "Debes tener el turno en curso para preparar una entrega."})
         if not outgoing.condominium_id:
@@ -116,7 +111,7 @@ class HandoverViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
         values = data.validated_data
         staff = self.active_staff()
         Staff.objects.select_for_update().get(pk=staff.pk)
-        shifts = {s.pk: s for s in SecurityShift.objects.select_for_update().filter(
+        shifts = {s.pk: s for s in tenant_shifts().select_for_update().filter(
             pk__in=[values["outgoing_shift"], values["incoming_shift"]]
         ).order_by("pk")}
         outgoing = shifts.get(values["outgoing_shift"])
@@ -141,7 +136,7 @@ class HandoverViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
         visible = self.get_object()
         staff = self.active_staff()
         Staff.objects.select_for_update().get(pk=staff.pk)
-        incoming = get_object_or_404(SecurityShift.objects.select_for_update(), pk=visible.incoming_shift_id)
+        incoming = get_object_or_404(tenant_shifts().select_for_update(), pk=visible.incoming_shift_id)
         handover = ShiftHandover.objects.select_for_update().get(pk=visible.pk)
         if incoming.guard_staff_id != staff.pk:
             raise PermissionDenied("Solo el guardia destinatario puede confirmar la recepción.")

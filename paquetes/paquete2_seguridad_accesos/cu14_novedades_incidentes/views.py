@@ -12,6 +12,7 @@ from auditlog.services import record_audit_event
 from condominiums.models import Staff
 from security.models import SecurityShift, ShiftLogEntry
 from ..cu13_turnos_seguridad.permissions import is_admin_or_management, is_security_guard
+from ..cu13_turnos_seguridad.tenancy import HasSecurityTenant, tenant_shifts
 from .serializers import ShiftLogQuerySerializer, ShiftLogSerializer
 
 
@@ -37,7 +38,7 @@ class CanAccessShiftLogs(BasePermission):
 class ShiftLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
                       mixins.CreateModelMixin, viewsets.GenericViewSet):
     serializer_class = ShiftLogSerializer
-    permission_classes = [IsAuthenticated, CanAccessShiftLogs]
+    permission_classes = [IsAuthenticated, HasSecurityTenant, CanAccessShiftLogs]
     lookup_value_regex = "[0-9]+"
 
     def get_queryset(self):
@@ -45,12 +46,7 @@ class ShiftLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
             "shift__guard_staff__person", "shift__condominium", "created_by_user"
         ).order_by("-occurred_at", "-id")
 
-        from tenancy.context import TenantContext
-        tenant = getattr(self.request, "tenant", None) or TenantContext.get_current_tenant()
-        if tenant and not TenantContext.is_global():
-            queryset = queryset.filter(
-                Q(shift__condominium=tenant) | Q(shift__guard_staff__condominium=tenant)
-            )
+        queryset = queryset.filter(shift__in=tenant_shifts())
 
         user = self.request.user
         if not is_admin_or_management(user):
@@ -77,7 +73,7 @@ class ShiftLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
         if not staff:
             raise PermissionDenied("Debes estar registrado como personal de seguridad activo.")
         # El mismo bloqueo utilizado al cerrar CU13 evita registrar mientras se cierra el turno.
-        shift = SecurityShift.objects.select_for_update().filter(
+        shift = tenant_shifts().select_for_update().filter(
             guard_staff=staff, status=SecurityShift.Status.OPEN
         ).first()
         if not shift:
