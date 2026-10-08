@@ -121,7 +121,9 @@ show_backend_logs() {
 
     echo -e "${BRIGHT_WHITE}=== CONFIGURACION ACTIVA EN /etc/taji/backend.env ===${RESET}"
     if [[ -f /etc/taji/backend.env ]]; then
-        cat /etc/taji/backend.env
+        # Los secretos se ocultan: esta pantalla se deja abierta frente a un
+        # cliente y `cat` a secas imprimiría la clave SMTP y la de PostgreSQL.
+        sed -E 's/^(.*(PASSWORD|SECRET|KEY).*)=.*/\1=********/' /etc/taji/backend.env
     fi
     echo ""
 
@@ -370,6 +372,134 @@ do_deploy_backend() {
     fi
 }
 
+do_configure_smtp() {
+    [[ -f $ENV_FILE ]] || fail "No existe $ENV_FILE. Ejecuta la opcion [1] primero."
+    clear
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo -e "${BRIGHT_CYAN}|        CONFIGURAR ENVIO DE CORREO (SMTP) PARA INVITACIONES            |${RESET}"
+    echo -e "${BRIGHT_CYAN}+------------------------------------------------------------------------+${RESET}"
+    echo ""
+    echo -e " ${WHITE}Las invitaciones de acceso de residentes y la recuperacion de contrasena${RESET}"
+    echo -e " ${WHITE}se envian por SMTP. Sin esto, Django usa el backend de CONSOLA:${RESET}"
+    echo -e " ${WHITE}acepta el mensaje y lo escribe en el log, sin enviarlo nunca.${RESET}"
+    echo ""
+    echo -e " ${YELLOW}Para Gmail usa una 'contrasena de aplicacion', no tu contrasena real:${RESET}"
+    echo -e " ${YELLOW}https://myaccount.google.com/apppasswords${RESET}"
+    echo ""
+
+    read -p " Servidor SMTP [smtp.gmail.com]: " SMTP_HOST
+    SMTP_HOST=${SMTP_HOST:-"smtp.gmail.com"}
+
+    read -p " Puerto [587]: " SMTP_PORT
+    SMTP_PORT=${SMTP_PORT:-"587"}
+
+    read -p " Usuario (correo emisor) [tucorreo@gmail.com]: " SMTP_USER
+    SMTP_USER=${SMTP_USER:-""}
+
+    if [[ -z $SMTP_USER ]]; then
+        fail "El usuario SMTP es obligatorio."
+    fi
+
+    # `read -s` para que la clave de aplicacion no quede en el historial de la
+    # terminal ni en la salida de `set -x`.
+    read -s -p " Contrasena de aplicacion (no se mostrara): " SMTP_PASS
+    echo ""
+    if [[ -z $SMTP_PASS ]]; then
+        fail "La contrasena SMTP es obligatoria."
+    fi
+
+    read -p " TLS/SSL (s/n) [s]: " SMTP_TLS
+    SMTP_TLS=${SMTP_TLS:-"s"}
+    [[ $SMTP_TLS == "n" || $SMTP_TLS == "N" ]] && SMTP_USE_TLS=False || SMTP_USE_TLS=True
+
+    read -p " Remitente [Taji <$SMTP_USER>]: " SMTP_FROM
+    SMTP_FROM=${SMTP_FROM:-"Taji <$SMTP_USER>"}
+
+    echo ""
+    echo -e "${YELLOW}Guardando en $ENV_FILE y reiniciando Gunicorn...${RESET}"
+
+    # Los valores viajan por variables de entorno, no interpolados en el código
+    # Python: una clave de aplicación con comillas o `$(...)` rompería el
+    # literal y dejaría el archivo a medias.
+    #
+    # Se escribe como root, no como `taji`: el archivo es root:taji 0640 y el
+    # usuario de servicio solo tiene lectura, que es lo que debe mantener.
+    (cd "$ROOT/current" && \
+        env TAJI_ENV_FILE="$ENV_FILE" \
+            TAJI_SMTP_HOST="$SMTP_HOST" \
+            TAJI_SMTP_PORT="$SMTP_PORT" \
+            TAJI_SMTP_TLS="$SMTP_USE_TLS" \
+            TAJI_SMTP_USER="$SMTP_USER" \
+            TAJI_SMTP_PASS="$SMTP_PASS" \
+            TAJI_SMTP_FROM="$SMTP_FROM" \
+        "$ROOT/current/.venv/bin/python" - <<'PYTHON'
+import os
+
+env_path = os.environ["TAJI_ENV_FILE"]
+settings = {
+    "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+    "EMAIL_HOST": os.environ["TAJI_SMTP_HOST"].strip(),
+    "EMAIL_PORT": os.environ["TAJI_SMTP_PORT"].strip(),
+    "EMAIL_USE_TLS": os.environ["TAJI_SMTP_TLS"].strip(),
+    "EMAIL_HOST_USER": os.environ["TAJI_SMTP_USER"].strip(),
+    "EMAIL_HOST_PASSWORD": os.environ["TAJI_SMTP_PASS"],
+    "DEFAULT_FROM_EMAIL": os.environ["TAJI_SMTP_FROM"].strip(),
+}
+
+with open(env_path, encoding="utf-8") as handle:
+    lines = handle.read().splitlines()
+
+# Se reemplazan las claves existentes en su sitio y se agregan las faltantes al
+# final, para no perder el orden ni duplicar entradas.
+out = []
+seen = set()
+for line in lines:
+    key = line.split("=", 1)[0].strip()
+    if key in settings:
+        out.append(f"{key}={settings[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+
+for key, value in settings.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+
+with open(env_path, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(out) + "\n")
+
+print("[OK] Variables guardadas:", ", ".join(sorted(settings)))
+PYTHON
+    ) || fail "No se pudo escribir la configuracion SMTP."
+
+    unset SMTP_PASS
+
+    chown root:taji "$ENV_FILE"
+    chmod 0640 "$ENV_FILE"
+
+    systemctl restart taji
+    echo ""
+    echo -e "${BRIGHT_GREEN}[OK] SMTP configurado. Verificacion del envio:${RESET}"
+    (cd "$ROOT/current" && runuser -u taji -- "$ROOT/current/.venv/bin/python" manage.py shell --settings=config.settings_production <<'PYTHON'
+from django.conf import settings
+from django.core.mail import send_mail
+
+print(f"EMAIL_BACKEND = {settings.EMAIL_BACKEND}")
+print(f"EMAIL_HOST    = {settings.EMAIL_HOST}:{settings.EMAIL_PORT} (TLS={settings.EMAIL_USE_TLS})")
+print(f"Remitente     = {settings.DEFAULT_FROM_EMAIL}")
+
+send_mail(
+    subject="Taji: configuracion de correo correcta",
+    message="Si lees esto, el envio de invitaciones y recuperacion de contrasena funciona.",
+    from_email=settings.DEFAULT_FROM_EMAIL,
+    recipient_list=[settings.EMAIL_HOST_USER],
+    fail_silently=False,
+)
+print("[OK] Correo de prueba enviado a", settings.EMAIL_HOST_USER)
+PYTHON
+    ) || echo -e "${RED}[!] La prueba de envio fallo. Revisa las credenciales y el log:${RESET} journalctl -u taji -n 30 --no-pager"
+}
+
 run_action() {
     local MODE=$1
 
@@ -401,6 +531,11 @@ run_action() {
 
     if [[ $MODE == "logs" ]]; then
         show_backend_logs
+        return 0
+    fi
+
+    if [[ $MODE == "smtp" || $MODE == "mail" || $MODE == "correo" ]]; then
+        do_configure_smtp
         return 0
     fi
 
@@ -524,6 +659,15 @@ COOKIE_SECURE=True
 SECURE_SSL_REDIRECT=True
 MEDIA_ROOT=/var/lib/taji/media
 CACHE_DIR=/var/cache/taji
+# El envio de correo arranca DESHABILITADO a proposito: sin credenciales SMTP
+# no se puede adivinar ningun remitente valido. El backend de consola acepta
+# el mensaje y lo escribe en el log, asi que Django no falla, pero la
+# invitacion nunca sale. Ejecuta la opcion [12] del menu para activarlo.
+EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+DEFAULT_FROM_EMAIL=Taji <no-reply@taji.app>
+# Bitacora de escaneos QR: tope de codigos desconocidos por guardia y por hora.
+QR_SCAN_UNKNOWN_LOG_LIMIT=30
+QR_SCAN_UNKNOWN_LOG_WINDOW_MINUTES=60
 ENV
             chown root:taji "$ENV_FILE"; chmod 0640 "$ENV_FILE"
             unset DB_PASSWORD SECRET FRONTEND_ORIGIN
@@ -670,10 +814,11 @@ while true; do
     echo -e "|  ${BRIGHT_CYAN}[9] ${RESET} ${WHITE}[!] Reiniciar Servicio Gunicorn / Nginx Backend${RESET}                 |"
     echo -e "|  ${BRIGHT_CYAN}[10]${RESET} ${WHITE}[~] Ver Logs en Tiempo Real (CTRL+C para salir)${RESET}                 |"
     echo -e "|  ${BRIGHT_CYAN}[11]${RESET} ${WHITE}[&] Gestor SaaS: Tenants, Condominios y Roles (config.sh)${RESET}       |"
-    echo -e "|  ${BRIGHT_CYAN}[12]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
+    echo -e "|  ${BRIGHT_CYAN}[12]${RESET} ${WHITE}[@] Configurar Envio de Correo SMTP (Invitaciones)${RESET}               |"
+    echo -e "|  ${BRIGHT_CYAN}[13]${RESET} ${WHITE}[x] Salir${RESET}                                                        |"
     echo -e "${BRIGHT_YELLOW}+------------------------------------------------------------------------+${RESET}\n"
-    
-    read -p " Selecciona una opcion [1-12]: " CHOICE
+
+    read -p " Selecciona una opcion [1-13]: " CHOICE
     case "$CHOICE" in
         1) run_action "install" || true ;;
         2) run_action "update" || true ;;
@@ -686,7 +831,8 @@ while true; do
         9) run_action "restart" || true ;;
         10) run_action "logs" || true ;;
         11) run_action "config" || true ;;
-        12) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
+        12) run_action "smtp" || true ;;
+        13) echo -e "${YELLOW}Operacion finalizada.${RESET}"; exit 0 ;;
         *) echo -e "${RED}Opcion invalida.${RESET}" ;;
     esac
 

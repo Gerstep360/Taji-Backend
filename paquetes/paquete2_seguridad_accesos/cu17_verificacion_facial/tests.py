@@ -34,6 +34,20 @@ def create_test_image_b64(color_fill=(120, 140, 200)):
         return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 
+def create_camera_capture_b64():
+    """
+    Data URL del tamaño de una captura real de cámara (640x480).
+
+    Las pruebas históricas usaban PNG de 64x64, cuyo base64 cabe en 500
+    caracteres. Por eso el bug de `varchar(500)` nunca apareció en CI: en
+    PostgreSQL una captura real lanzaba `DataError` y la API respondía 503.
+    """
+    img = Image.new("RGB", (640, 480), color=(30, 90, 160))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
 class FaceVerificationTestCase(TestCase):
     """T075 (IA/Backend): Pruebas faciales de coincidencia, no coincidencia, revisión manual y enrolamiento."""
 
@@ -187,3 +201,67 @@ class FaceVerificationTestCase(TestCase):
         self.assertEqual(res_reject.status_code, status.HTTP_201_CREATED)
         self.assertFalse(res_reject.data["human_confirmed"])
         self.assertIsNone(res_reject.data["access_event"])
+
+    def test_match_persists_a_real_size_camera_capture(self):
+        """
+        Regresión del 503: una captura de cámara real excedía los 500 caracteres
+        del campo y PostgreSQL rechazaba el INSERT con `DataError`, que el
+        manejador global convertía en "503 La base de datos no está disponible".
+        """
+        capture = create_camera_capture_b64()
+        self.assertGreater(len(capture), 500)
+
+        response = self.client.post(
+            "/api/v1/security/cu17/face-verification/match/",
+            {"captured_image": capture, "threshold": 0.45},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        verification = FaceVerification.objects.get(id=response.data["verification_id"])
+        self.assertEqual(verification.captured_image, capture)
+
+    def test_confirm_persists_a_real_size_camera_capture(self):
+        """La confirmación humana recibe la misma captura y también debe persistirla."""
+        capture = create_camera_capture_b64()
+
+        response = self.client.post(
+            "/api/v1/security/cu17/face-verification/confirm/",
+            {
+                "captured_image": capture,
+                "matched_resident_id": self.resident.id,
+                "similarity_score": 0.62,
+                "threshold": 0.70,
+                "result": "REVIEW",
+                "human_confirmed": True,
+                "create_access_event": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(FaceVerification.objects.get().captured_image, capture)
+
+    def test_enrollment_persists_a_real_size_reference_image(self):
+        """
+        Regresión del mismo bug en el enrolamiento: `reference_image` también
+        estaba declarado como `varchar(500)` y recibía la data URL completa.
+
+        Se verifica a nivel de columna porque el camino HTTP depende de que el
+        detector facial acepte la foto; lo que se rompe aquí es el esquema.
+        """
+        capture = create_camera_capture_b64()
+        self.assertGreater(len(capture), 500)
+
+        reference = BiometricReference.objects.create(
+            resident=self.resident,
+            reference_image=capture,
+            embedding=pack_embedding([0.1] * 512),
+            embedding_dim=512,
+            model_name=MODEL_NAME,
+            model_version=MODEL_VERSION,
+        )
+
+        reference.refresh_from_db()
+        self.assertEqual(reference.reference_image, capture)

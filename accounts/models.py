@@ -108,6 +108,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="False mientras el Administrador no haya aprobado la solicitud de Residente.",
     )
     is_staff = models.BooleanField(default=False)
+    # True mientras la cuenta siga usando la clave temporal entregada por la
+    # administración. While True, la API exige cambiar la contraseña antes de
+    # dejar usar el resto del sistema (ver `must_change_password` en el login).
+    must_change_password = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 

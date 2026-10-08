@@ -57,6 +57,14 @@ def taji_exception_handler(exc: Exception, context: dict[str, Any]) -> Response 
             response = Response(status=status.HTTP_409_CONFLICT)
             raw_detail: Any = "El recurso entra en conflicto con información existente."
         elif isinstance(exc, DatabaseError):
+            # Se registra el traceback: sin esto, errores de esquema (por ejemplo
+            # un valor que excede el max_length de una columna) se reportaban
+            # como un 503 genérico sin dejar rastro en el log.
+            logger.exception(
+                "Error de base de datos en la API",
+                exc_info=(type(exc), exc, exc.__traceback__),
+                extra={"view": context.get("view")},
+            )
             response = Response(status=status.HTTP_503_SERVICE_UNAVAILABLE)
             raw_detail = "La base de datos no está disponible temporalmente."
         else:

@@ -24,7 +24,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "email", "is_superuser", "is_approved", "first_name", "last_name", "full_name", "phone", "role", "date_joined")
+        fields = ("id", "email", "is_superuser", "is_approved", "first_name", "last_name", "full_name", "phone", "role", "date_joined", "must_change_password")
         read_only_fields = fields
 
     def to_representation(self, instance):
@@ -226,6 +226,24 @@ class ForgotPasswordSerializer(serializers.Serializer):
 class ResetPasswordSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+    password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["password_confirm"]:
+            raise serializers.ValidationError({"password_confirm": "Las contraseñas no coinciden."})
+        return attrs
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """
+    Cambio de contraseña por un usuario ya autenticado.
+
+    Es el paso que completa el alta con contraseña temporal: el residente entra
+    con la clave que recibió por correo y aquí define la definitiva.
+    """
+
+    current_password = serializers.CharField(write_only=True, trim_whitespace=False)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
 
