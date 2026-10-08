@@ -1,18 +1,21 @@
 """Vistas y endpoints para la capa SaaS Multi-Tenant (Sección 21, 31, 35 de multitenant_saas_optimizado.md)."""
 
-from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import status, viewsets
+from django.db.models import Count, Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
+from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from condominiums.models import Condominium
+from condominiums.models import Condominium, Resident, Staff, Unit
+from config.api import TajiPageNumberPagination
 from tenancy.context import TenantContext
 from tenancy.models import TenantMembership
 from tenancy.permissions import IsPlatformAdmin, IsTenantAdmin, IsTenantMember
 from tenancy.serializers import (
+    PlatformTenantSerializer,
     TenantContextResponseSerializer,
     TenantMembershipSerializer,
     TenantProvisionRequestSerializer,
@@ -74,6 +77,155 @@ class TenantViewSet(viewsets.ModelViewSet):
         )
 
         return Response(TenantSerializer(condominium).data, status=status.HTTP_201_CREATED)
+
+
+class PlatformTenantsView(generics.GenericAPIView):
+    """
+    Listado global de tenants para la consola de la plataforma.
+
+    Es **de solo lectura** a propósito: sirve para que un administrador global
+    vea cuantos condominios hay y como estan, no para crearlos ni modificarlos
+    (eso sigue en `TenantViewSet` y en el servicio de aprovisionamiento). No se
+    extiende de `ModelViewSet` justamente para que no quede-exposed un
+    `PATCH` accidental.
+
+    Nota sobre el aislamiento: los contadores (unidades, residentes, personal) salen
+    de modelos que usan `TenantAwareManager`, asi que se consultan **sin**
+    filtro de tenant. No hace falta confiar en que el contexto global este
+    activo: `TenantResolver` solo entra en modo global si el superusuario no
+    tiene membresias, y un admin de plataforma suele tenerlas.
+    """
+
+    serializer_class = PlatformTenantSerializer
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
+    pagination_class = TajiPageNumberPagination
+
+    @extend_schema(
+        tags=["SaaS - Plataforma"],
+        summary="Listar todos los tenants de la plataforma (solo lectura)",
+        description=(
+            "Devuelve todos los condominios registrados con su estado, plan y "
+            "contadores de uso. Exclusivo para administradores globales."
+        ),
+        parameters=[
+            OpenApiParameter(
+                "search",
+                str,
+                description="Filtra por nombre, slug, razón social o correo.",
+            ),
+            OpenApiParameter("status", str, description="Filtra por estado (ACTIVE, INACTIVE...)."),
+            OpenApiParameter("subscription_status", str, description="Filtra por estado de suscripción."),
+            OpenApiParameter("ordering", str, description="Campo de orden; anteponer - para descendente."),
+        ],
+        responses={status.HTTP_200_OK: PlatformTenantSerializer(many=True)},
+    )
+    def get(self, request):
+        queryset = self._base_queryset()
+
+        search = request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(slug__icontains=search)
+                | Q(legal_name__icontains=search)
+                | Q(email__icontains=search)
+            )
+
+        tenant_status = request.query_params.get("status", "").strip().upper()
+        if tenant_status:
+            queryset = queryset.filter(status=tenant_status)
+
+        subscription_status = request.query_params.get("subscription_status", "").strip().upper()
+        if subscription_status == "NO_SUBSCRIPTION":
+            queryset = queryset.filter(subscription__isnull=True)
+        elif subscription_status:
+            queryset = queryset.filter(subscription__status=subscription_status)
+
+        queryset = self._order(queryset, request.query_params.get("ordering", "name"))
+
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page if page is not None else queryset, many=True)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @staticmethod
+    def _order(queryset, ordering: str):
+        allowed = {
+            "name",
+            "created_at",
+            "status",
+            "users_count",
+            "units_count",
+            "residents_count",
+            "staff_count",
+        }
+        field = ordering.lstrip("-")
+        if field not in allowed:
+            field = "name"
+        prefix = "-" if ordering.startswith("-") else ""
+        return queryset.order_by(f"{prefix}{field}", "name")
+
+    @staticmethod
+    def _base_queryset():
+        """
+        Tenants con contadores agregados en la propia consulta.
+
+        Los conteos se resuelven con `Count` sobre relaciones inversas en lugar de
+        una consulta por tenant: con 50 condominios, la version ingenua haria
+        250 consultas y esta hace una.
+        """
+        return (
+            Condominium.objects.all()
+            .annotate(
+                users_count=Count("tenant_memberships", distinct=True),
+                sectors_count=Count("sectors", distinct=True),
+                # Las unidades cuelgan del sector, de ahi el doble salto.
+                units_count=Count("sectors__units", distinct=True),
+                residents_count=Count("residents", distinct=True),
+                staff_count=Count("staff_members", distinct=True),
+            )
+            .select_related("subscription__plan")
+        )
+
+
+class PlatformTenantsSummaryView(generics.GenericAPIView):
+    """Totales de la plataforma, para las tarjetas del encabezado."""
+
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
+
+    @extend_schema(
+        tags=["SaaS - Plataforma"],
+        summary="Resumen global de tenants (solo lectura)",
+        responses={status.HTTP_200_OK: dict},
+    )
+    # No pagina: este endpoint devuelve un unico objeto con los totales.
+    def get(self, request):
+        # Los totales se calculan sobre consultas separadas y sin las
+        # anotaciones de `Count` del listado. Si se reutilizaran aqui, los
+        # JOIN multiplicarian las filas y `Count("id")` sin `distinct` daria un
+        # total mayor que el numero real de condominios.
+        tenants = Condominium.objects.count()
+        active = Condominium.objects.filter(is_active=True).count()
+        with_subscription = Condominium.objects.filter(subscription__isnull=False).count()
+
+        return Response(
+            {
+                "tenants": tenants,
+                "active_tenants": active,
+                "inactive_tenants": tenants - active,
+                "with_subscription": with_subscription,
+                # Un tenant sin suscripcion cuenta como tal, no como pago vencido.
+                "without_subscription": tenants - with_subscription,
+                # `all_tenants()` salta el filtro de `TenantAwareManager`: es un
+                # total global y un admin con un tenant activo no debe ver
+                # recortados los datos de los demas condominios.
+                "units": Unit.objects.all_tenants().count(),
+                "residents": Resident.objects.all_tenants().count(),
+                "staff": Staff.objects.all_tenants().count(),
+                "users": TenantMembership.objects.count(),
+            }
+        )
 
 
 class MyTenantsView(APIView):

@@ -155,7 +155,13 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "login": "10/min",
         "register": "5/hour",
-        "password_reset": "5/hour",
+        # Recuperar contraseña y activarla van en scopes separados. Compartían
+        # `password_reset` (5/hora), así que pedir la recuperación consumía la
+        # cuota de las activaciones de los demás, y detrás del proxy Nginx esa
+        # cuota era por IP compartida: con el WiFi del condominio, el sexto
+        # residente recibía 429 al activar su cuenta.
+        "password_reset_request": "10/hour",
+        "password_reset": "20/hour",
         "token_refresh": "30/min",
     },
 }

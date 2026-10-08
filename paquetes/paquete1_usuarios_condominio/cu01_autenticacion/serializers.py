@@ -246,6 +246,11 @@ class ChangePasswordSerializer(serializers.Serializer):
     current_password = serializers.CharField(write_only=True, trim_whitespace=False)
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     password_confirm = serializers.CharField(write_only=True, trim_whitespace=False)
+    # Opcional. En web no hace falta: la cookie HttpOnly ya lo identifica. El
+    # móvil lo envía para que su sesión sobreviva a la revocación del resto.
+    refresh_token = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, default=""
+    )
 
     def validate(self, attrs):
         if attrs["password"] != attrs["password_confirm"]:

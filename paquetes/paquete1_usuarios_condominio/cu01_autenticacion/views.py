@@ -2,7 +2,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import authenticate, password_validation
-from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.tokens import default_token_generator  # noqa: F401  (reexport)
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.mail import send_mail
 from django.db import transaction
@@ -14,7 +14,7 @@ from rest_framework import generics, permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
-from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
 from accounts.api_serializers import (
@@ -27,6 +27,7 @@ from accounts.api_serializers import (
 )
 from accounts.cookies import clear_auth_cookies, set_auth_cookies
 from accounts.models import LoginAttempt, User
+from accounts.tokens import token_generator
 from auditlog.services import record_audit_event
 from condominiums.models import ResidentUnit
 from accounts.serializers import (
@@ -59,6 +60,40 @@ AUTH_ERROR_RESPONSE = OpenApiResponse(
 def token_pair_for_user(user):
     refresh = RefreshToken.for_user(user)
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
+
+
+def revoke_all_sessions(user, *, keep_jti: str | None = None) -> int:
+    """
+    Invalida todos los refresh tokens del usuario.
+
+    Se hace con un único `bulk_create` en vez de un `get_or_create` por token.
+    La diferencia importa: con `ROTATE_REFRESH_TOKENS` activo se crea una fila
+    `OutstandingToken` por cada renovación de sesión, así que un usuario activo
+    acumula cientos o miles. El bucle con `get_or_create` costaba 1 + 2N
+    consultas dentro de la transacción y terminaba por comerse el timeout del
+    worker.
+
+    `keep_jti` conserva la sesión desde la que se hizo el cambio, para no
+    expulsar al usuario que acaba de cambiar su propia contraseña.
+    """
+    outstanding = OutstandingToken.objects.filter(user=user)
+    if keep_jti:
+        outstanding = outstanding.exclude(jti=keep_jti)
+
+    # Se listan solo los ids: `bulk_create` necesita las filas completas y no
+    # hay que cargarse el campo `token` de todas para poder insertar la FK.
+    token_ids = list(outstanding.values_list("id", flat=True))
+    if not token_ids:
+        return 0
+
+    # `ignore_conflicts` cubre el caso de que alguno ya estuviera en la lista
+    # negra, sin tener que consultarlo antes.
+    BlacklistedToken.objects.bulk_create(
+        [BlacklistedToken(token_id=token_id) for token_id in token_ids],
+        ignore_conflicts=True,
+        batch_size=500,
+    )
+    return len(token_ids)
 
 
 class RegisterView(generics.GenericAPIView):
@@ -119,6 +154,7 @@ class LoginView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data["email"].strip().lower()
+        update_last_login = getattr(settings, "SIMPLE_JWT", {}).get("UPDATE_LAST_LOGIN", True)
         cutoff = timezone.now() - timezone.timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
         last_success = (
             LoginAttempt.objects.filter(email=email, was_successful=True)
@@ -208,6 +244,14 @@ class LoginView(generics.GenericAPIView):
             ip_address=request.META.get("REMOTE_ADDR"),
             was_successful=True,
         )
+        # `UPDATE_LAST_LOGIN` de SIMPLE_JWT solo lo aplica
+        # `TokenObtainPairSerializer`, y esta vista genera los tokens a mano
+        # para poder devolver cookies o un cuerpo según el cliente. Sin esto,
+        # `last_login` se quedaba siempre en NULL: un campo de auditoría
+        # muerto que además aparece vacío en el admin de Django.
+        if update_last_login:
+            user.last_login = timezone.now()
+            user.save(update_fields=["last_login"])
         record_audit_event(
             action_code="auth.login.success",
             resource_type="User",
@@ -429,7 +473,9 @@ class ForgotPasswordView(generics.GenericAPIView):
     serializer_class = ForgotPasswordSerializer
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
-    throttle_scope = "password_reset"
+    # Scope propio: pedir la recuperación no debe consumir la cuota de las
+    # activaciones de cuenta, que es un flujo distinto y frecuente.
+    throttle_scope = "password_reset_request"
 
     @extend_schema(
         tags=["Autenticación"],
@@ -445,7 +491,7 @@ class ForgotPasswordView(generics.GenericAPIView):
 
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = default_token_generator.make_token(user)
+            token = token_generator.make_token(user)
             reset_url = f"{settings.PASSWORD_RESET_URL}?{urlencode({'uid': uid, 'token': token})}"
             send_mail(
                 subject="Restablece tu contraseña de Taji",
@@ -494,9 +540,7 @@ class ResetPasswordView(generics.GenericAPIView):
         except (ValueError, TypeError, OverflowError, User.DoesNotExist):
             user = None
 
-        if user is None or not default_token_generator.check_token(
-            user, data["token"]
-        ):
+        if user is None or not token_generator.check_token(user, data["token"]):
             raise serializers.ValidationError({"token": ["El enlace no es válido o ya expiró."]})
 
         try:
@@ -509,8 +553,7 @@ class ResetPasswordView(generics.GenericAPIView):
         user.must_change_password = False
         user.save(update_fields=["password", "must_change_password", "updated_at"])
 
-        for outstanding in OutstandingToken.objects.filter(user=user):
-            BlacklistedToken.objects.get_or_create(token=outstanding)
+        revoke_all_sessions(user)
 
         record_audit_event(
             action_code="auth.password.reset_completed",
@@ -597,20 +640,29 @@ class ChangePasswordView(generics.GenericAPIView):
 
     @staticmethod
     def _revoke_other_sessions(user, request) -> None:
-        """Invalida los refresh tokens previos al de esta sesión."""
+        """
+        Invalida los refresh tokens previos al de esta sesión.
+
+        La sesión actual se identifica por su **refresh token**, no por el de
+        acceso: `OutstandingToken.jti` guarda el `jti` del refresh, y el del
+        access siempre es distinto. Usar el header `Authorization` para
+        preservar la sesión no preservaba nada y terminaba expulsando también
+        al usuario que acababa de cambiar su contraseña.
+
+        En web el refresh viaja en la cookie HttpOnly; en móvil el cliente lo
+        manda en el cuerpo. Si no se puede determinar, se revocan todas y el
+        usuario vuelve a iniciar sesión: preferible a dejar sesiones abiertas.
+        """
+        raw_refresh = request.data.get("refresh_token") or request.COOKIES.get(
+            settings.AUTH_COOKIE_REFRESH
+        )
         current_jti = None
-        raw_access = request.headers.get("Authorization", "")
-        if raw_access.startswith("Bearer "):
+        if raw_refresh:
             try:
-                current_jti = AccessToken(raw_access[7:])["jti"]
+                # Sin `str()`: `RefreshToken.__str__` devuelve el token
+                # codificado, no el payload, y `["jti"]` sobre un string falla.
+                current_jti = RefreshToken(raw_refresh)["jti"]
             except (TokenError, KeyError, ValueError):
                 current_jti = None
 
-        keep_token = None
-        if current_jti:
-            keep_token = OutstandingToken.objects.filter(user=user, token__jti=current_jti).first()
-
-        for outstanding in OutstandingToken.objects.filter(user=user).exclude(
-            id=keep_token.id if keep_token else None
-        ):
-            BlacklistedToken.objects.get_or_create(token=outstanding)
+        revoke_all_sessions(user, keep_jti=current_jti)

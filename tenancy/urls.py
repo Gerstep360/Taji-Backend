@@ -9,6 +9,8 @@ from tenancy.views import (
     MyTenantsView,
     PaymentConfigView,
     PaymentHistoryView,
+    PlatformTenantsSummaryView,
+    PlatformTenantsView,
     PublicCondominiumsListView,
     SaaSCondominiumRegisterView,
     StripeWebhookView,
@@ -41,4 +43,9 @@ urlpatterns = [
     # SaaS Public Onboarding / Provisioning for Condominium Administrators
     path("onboarding/register/", SaaSCondominiumRegisterView.as_view(), name="saas-onboarding-register"),
     path("condominiums/public/", PublicCondominiumsListView.as_view(), name="saas-public-condominiums"),
+
+    # Consola global de la plataforma (solo lectura, Platform Admin).
+    # Se declara antes que `router.urls` para que su nombre fijo gane siempre.
+    path("platform/tenants/", PlatformTenantsView.as_view(), name="saas-platform-tenants"),
+    path("platform/tenants/summary/", PlatformTenantsSummaryView.as_view(), name="saas-platform-tenants-summary"),
 ] + router.urls

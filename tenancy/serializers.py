@@ -27,6 +27,121 @@ class TenantSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at")
 
 
+class PlatformTenantSerializer(serializers.ModelSerializer):
+    """
+    Vista de solo lectura de un tenant para la consola global de la plataforma.
+
+    A diferencia de `TenantSerializer`, aqui **todo** es de solo lectura: esta
+    vista existe para que un administrador global pueda ver cuantos condominios
+    hay, como estan y cuanta gente usan, no para gestionarlos. El alta y la
+    edicion siguen pasando por `TenantViewSet` y el servicio de aprovisionamiento.
+
+    Los contadores llegan como anotaciones de la vista, de modo que mostrar los
+    N tenants no dispara N+1 consultas.
+    """
+
+    plan_name = serializers.SerializerMethodField()
+    subscription_status = serializers.SerializerMethodField()
+    subscription_status_display = serializers.SerializerMethodField()
+    is_subscription_valid = serializers.SerializerMethodField()
+    days_left = serializers.SerializerMethodField()
+
+    # Contadores agregados en la vista. No son columnas de `Condominium`, asi
+    # que se declaran a mano: un `ModelSerializer` no puede deducirlas.
+    users_count = serializers.IntegerField(read_only=True, default=0)
+    sectors_count = serializers.IntegerField(read_only=True, default=0)
+    units_count = serializers.IntegerField(read_only=True, default=0)
+    residents_count = serializers.IntegerField(read_only=True, default=0)
+    staff_count = serializers.IntegerField(read_only=True, default=0)
+
+    # Viene de la suscripcion asociada, no del condominio.
+    current_period_end = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Condominium
+        fields = (
+            "id",
+            "name",
+            "slug",
+            "status",
+            "is_active",
+            "address",
+            "phone",
+            "email",
+            "timezone",
+            "created_at",
+            # Poblados por anotaciones en la vista.
+            "users_count",
+            "sectors_count",
+            "units_count",
+            "residents_count",
+            "staff_count",
+            # Suscripcion (puede no existir).
+            "plan_name",
+            "subscription_status",
+            "subscription_status_display",
+            "is_subscription_valid",
+            "days_left",
+            "current_period_end",
+        )
+        read_only_fields = fields
+
+    def _subscription(self, obj):
+        # `select_related` deja la suscripcion en `None` si no existe, en lugar
+        # de lanzar una excepcion por la relacion OneToOne ausente.
+        return getattr(obj, "subscription", None)
+
+    def get_plan_name(self, obj) -> str:
+        subscription = self._subscription(obj)
+        if not subscription or not subscription.plan:
+            return ""
+        return subscription.plan.name
+
+    def get_subscription_status(self, obj) -> str:
+        subscription = self._subscription(obj)
+        return subscription.status if subscription else "NO_SUBSCRIPTION"
+
+    def get_subscription_status_display(self, obj) -> str:
+        subscription = self._subscription(obj)
+        if not subscription:
+            return "Sin suscripción"
+        return subscription.get_status_display()
+
+    def get_is_subscription_valid(self, obj) -> bool:
+        subscription = self._subscription(obj)
+        return bool(subscription and subscription.is_valid)
+
+    def get_current_period_end(self, obj):
+        subscription = self._subscription(obj)
+        return subscription.current_period_end if subscription else None
+
+    def get_days_left(self, obj):
+        """
+        Dias restantes del periodo o de la prueba.
+
+        Devuelve `None` cuando no hay suscripcion, para que la interfaz pueda
+        distinguir "sin plan" de "plan vencido hace 0 dias".
+        """
+        from django.utils import timezone
+
+        subscription = self._subscription(obj)
+        if not subscription:
+            return None
+
+        deadline = self._deadline(subscription)
+        if not deadline:
+            return None
+
+        return max((deadline - timezone.now()).days, 0)
+
+    @staticmethod
+    def _deadline(subscription):
+        """Fecha que manda: la prueba si esta en TRIAL, si no el periodo en curso."""
+        if subscription.status == subscription.Status.TRIAL and subscription.trial_ends_at:
+            return subscription.trial_ends_at
+        return subscription.current_period_end
+
+
 class TenantMembershipSerializer(serializers.ModelSerializer):
     condominium = TenantSerializer(read_only=True)
     role_name = serializers.CharField(source="role.name", read_only=True)
