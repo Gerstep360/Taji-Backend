@@ -10,5 +10,6 @@ segno==1.6.6
 numpy==2.5.3
 opencv-python-headless==5.0.0.93
 httpx==0.28.1
+openpyxl==3.1.5
 insightface==2.1
 onnxruntime==1.30.0

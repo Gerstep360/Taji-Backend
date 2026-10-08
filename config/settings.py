@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
     "tenancy.apps.TenancyConfig",
+    "reports",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
 ]
 
