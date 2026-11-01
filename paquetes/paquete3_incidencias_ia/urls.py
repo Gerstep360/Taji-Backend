@@ -1,6 +1,7 @@
 """Paquete 3: Incidencias e Inteligencia Artificial (CU18-CU22)."""
 
 from rest_framework.routers import DefaultRouter
+from django.urls import include, path
 from .cu18_registrar_incidencia.views import IncidentReportViewSet
 from .cu19_seguimiento_historial.views import IncidentTrackingViewSet
 
@@ -22,4 +23,4 @@ class IncidentViewSet(IncidentTrackingViewSet, IncidentReportViewSet):
 
 router = DefaultRouter()
 router.register("incidents", IncidentViewSet, basename="incident-tracking")
-urlpatterns = router.urls
+urlpatterns = [path('', include('paquetes.paquete3_incidencias_ia.cu22_analisis_ia.urls'))] + router.urls

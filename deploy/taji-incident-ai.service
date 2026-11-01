@@ -1,0 +1,27 @@
+[Unit]
+Description=Taji CU22 NVIDIA incident analysis worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taji
+Group=taji
+WorkingDirectory=/opt/taji/current
+EnvironmentFile=/etc/taji/backend.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings_production
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+ExecStart=/opt/taji/current/.venv/bin/python manage.py run_incident_ai_worker
+Restart=always
+RestartSec=5
+MemoryMax=384M
+CPUQuota=50%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/cache/taji
+
+[Install]
+WantedBy=multi-user.target

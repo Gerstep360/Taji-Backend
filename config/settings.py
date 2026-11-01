@@ -259,3 +259,6 @@ MEDIA_URL = "/media/"
 # Límites de evidencias por incidencia: cantidad de archivos y tamaño por archivo.
 INCIDENT_EVIDENCE_MAX_FILES = env.int("INCIDENT_EVIDENCE_MAX_FILES", default=5)
 INCIDENT_EVIDENCE_MAX_BYTES = env.int("INCIDENT_EVIDENCE_MAX_BYTES", default=5 * 1024 * 1024)
+
+from .nvidia import configuration as nvidia_configuration
+NVIDIA = nvidia_configuration(BASE_DIR)

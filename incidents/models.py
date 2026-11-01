@@ -346,6 +346,20 @@ class RiskRule(models.Model):
 
 
 class IncidentAIAnalysis(models.Model):
+    class ExecutionStatus(models.TextChoices):
+        QUEUED = 'QUEUED', 'En espera'
+        RUNNING = 'RUNNING', 'Analizando'
+        SUCCEEDED = 'SUCCEEDED', 'Analizado'
+        FAILED = 'FAILED', 'Revisión manual'
+
+    execution_status = models.CharField(max_length=16, choices=ExecutionStatus.choices, default=ExecutionStatus.SUCCEEDED)
+    requested_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_incident_analyses')
+    input_snapshot = models.JSONField(default=dict)
+    safety_findings = models.JSONField(default=list)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    error_code = models.CharField(max_length=40, blank=True)
     class ReviewStatus(models.TextChoices):
         PENDING = "PENDING", "Pendiente"
         ACCEPTED = "ACCEPTED", "Aceptado"
@@ -393,6 +407,7 @@ class IncidentAIAnalysis(models.Model):
     class Meta:
         db_table = "incident_ai_analysis"
         constraints = [
+            models.UniqueConstraint(fields=('incident',), condition=Q(execution_status__in=('QUEUED', 'RUNNING')), name='uq_incident_ai_active_job'),
             models.CheckConstraint(
                 condition=Q(confidence__isnull=True)
                 | Q(confidence__gte=0, confidence__lte=1),
@@ -400,7 +415,8 @@ class IncidentAIAnalysis(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=("incident", "-created_at"), name="idx_ai_incident_time")
+            models.Index(fields=("incident", "-created_at"), name="idx_ai_incident_time"),
+            models.Index(fields=('execution_status', 'created_at'), name='idx_ai_execution_queue'),
         ]
 
 
@@ -429,3 +445,17 @@ class IncidentAIEntity(models.Model):
         indexes = [
             models.Index(fields=("analysis",), name="idx_ai_entity_analysis")
         ]
+
+
+class IncidentAIReview(models.Model):
+    """Corrección separada: la predicción original nunca se reemplaza."""
+    analysis = models.OneToOneField(IncidentAIAnalysis, on_delete=models.PROTECT, related_name='human_review')
+    reviewer = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True)
+    category = models.ForeignKey(IncidentCategory, on_delete=models.PROTECT)
+    priority = models.ForeignKey(PriorityLevel, on_delete=models.PROTECT)
+    reason = models.TextField()
+    safety_override = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'incident_ai_review'

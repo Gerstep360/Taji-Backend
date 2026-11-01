@@ -309,6 +309,10 @@ def create_incident(*, condominium, reporter, reporter_resident, validated_data,
                 incident=incident, changed_by_user=reporter, to_status=Incident.Status.REPORTED,
                 comment="Incidencia registrada", changed_at=incident.created_at,
             )
+            from django.conf import settings
+            if settings.NVIDIA['ENABLED'] and settings.NVIDIA['AUTO_ANALYZE']:
+                from paquetes.paquete3_incidencias_ia.cu22_analisis_ia.services import enqueue
+                enqueue(incident, reporter, automatic=True)
             for evidence in evidences:
                 target = f"incidents/{condominium.pk}/{incident.pk}/{uuid.uuid4().hex[:12]}-{evidence.safe_name}"
                 evidence.upload.seek(0)
