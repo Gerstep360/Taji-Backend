@@ -145,6 +145,49 @@ class Incident(models.Model):
             ),
         ]
 
+    @property
+    def is_pending(self) -> bool:
+        return self.status in (
+            self.Status.REPORTED,
+            self.Status.REVIEWED,
+            self.Status.ASSIGNED,
+            self.Status.IN_PROGRESS,
+        )
+
+    @property
+    def is_overdue(self) -> bool:
+        if not self.is_pending or not self.due_at:
+            return False
+        return timezone.now() > self.due_at
+
+    @property
+    def time_remaining_minutes(self) -> int | None:
+        if not self.due_at:
+            return None
+        delta = self.due_at - timezone.now()
+        return int(delta.total_seconds() / 60)
+
+    @property
+    def overdue_by_minutes(self) -> int:
+        if not self.is_overdue or not self.due_at:
+            return 0
+        delta = timezone.now() - self.due_at
+        return max(0, int(delta.total_seconds() / 60))
+
+    def save(self, *args, **kwargs):
+        if not self.public_code:
+            import uuid
+            today_str = timezone.now().strftime("%Y%m%d")
+            random_part = uuid.uuid4().hex[:6].upper()
+            self.public_code = f"INC-{today_str}-{random_part}"
+        if not self.due_at and self.priority and self.priority.target_minutes:
+            base_time = self.created_at or timezone.now()
+            self.due_at = base_time + timezone.timedelta(minutes=self.priority.target_minutes)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.public_code}: {self.title or self.description[:30]}"
+
 
 class IncidentAttachment(models.Model):
     class Type(models.TextChoices):
@@ -170,6 +213,9 @@ class IncidentAttachment(models.Model):
         indexes = [
             models.Index(fields=("incident",), name="idx_inc_attachment_inc")
         ]
+
+    def __str__(self):
+        return f"{self.incident.public_code} - {self.get_file_type_display()}"
 
 
 class IncidentAssignment(models.Model):
@@ -207,6 +253,9 @@ class IncidentAssignment(models.Model):
             )
         ]
 
+    def __str__(self):
+        return f"{self.incident.public_code} -> {self.assigned_to_staff}"
+
 
 class IncidentStatusHistory(models.Model):
     incident = models.ForeignKey(Incident, on_delete=models.CASCADE, related_name="status_history")
@@ -227,6 +276,9 @@ class IncidentStatusHistory(models.Model):
         indexes = [
             models.Index(fields=("incident", "changed_at"), name="idx_incident_history")
         ]
+
+    def __str__(self):
+        return f"{self.incident.public_code}: {self.from_status} -> {self.to_status}"
 
 
 class IncidentComment(models.Model):
@@ -253,6 +305,9 @@ class IncidentComment(models.Model):
         indexes = [
             models.Index(fields=("incident", "created_at"), name="idx_inc_comment_time")
         ]
+
+    def __str__(self):
+        return f"{self.incident.public_code} ({self.visibility}): {self.body[:30]}"
 
 
 class RiskRule(models.Model):
