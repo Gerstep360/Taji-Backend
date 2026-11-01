@@ -43,6 +43,7 @@ class Command(BaseCommand):
         except ImportError:
             rss_kb = None
         report = {'model':settings.NVIDIA['MODEL'],'samples':len(results),
+                  'scope':'provider_connectivity_and_schema_only', 'semantic_quality_evaluated':False,
                   'successful':sum(r['success'] for r in results),'duration_ms':durations,
                   'p50_ms':median(durations),'p95_ms':ordered[math.ceil(.95*len(ordered))-1],
                   'process_max_rss_kb':rss_kb,'cpu_count':os.cpu_count(),'results':results}

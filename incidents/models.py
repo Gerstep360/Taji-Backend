@@ -235,6 +235,15 @@ class IncidentAttachment(models.Model):
         return f"{self.incident.public_code} - {self.get_file_type_display()}"
 
 
+class IncidentAIWorkerHeartbeat(models.Model):
+    """Disponibilidad del procesador compartida entre API y trabajador."""
+    worker_id = models.UUIDField(primary_key=True, editable=False)
+    last_seen = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = 'incident_ai_worker_heartbeat'
+
+
 class IncidentAssignment(models.Model):
     incident = models.ForeignKey(Incident, on_delete=models.CASCADE, related_name="assignments")
     assigned_to_staff = models.ForeignKey(

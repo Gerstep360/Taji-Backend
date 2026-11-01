@@ -9,11 +9,11 @@ def normalized(value):
 
 def context_of(text, start, end, *, allow_distant=False):
     before = text[max(0, start - 65):start]
-    before = re.split(r'[.;!?\n]|\bpero\b|\bsin embargo\b', before)[-1]
+    before = re.split(r'[.;!?\n]|\bpero\b|\bsin embargo\b|\bahora\b|\bactualmente\b', before)[-1]
     after = text[end:end + 45]
     if re.search(r'\b(simulacro|simulacion|ejercicio)\b.{0,25}$', before):
         return 'drill'
-    if re.search(r'\b(no hay|no existe|sin|no se observa|no se detecta|no veo)\b[^,]{0,35}$', before):
+    if re.search(r'\b(no hay|no hubo|no existe|sin|nadie fue|nadie esta|no fue|no se observa|no se detecta|no veo)\b[^,]{0,35}$', before):
         return 'negated'
     if re.search(r'\b(ayer|antes|la semana pasada)\b.{0,35}$', before) or re.match(r'\s*(ya (fue|esta) (apagado|controlado|resuelto))', after):
         return 'past'
@@ -35,7 +35,7 @@ def evaluate(text, rules):
                 continue
             for match in matches:
                 context = context_of(text, match.start(), match.end(), allow_distant=rule.entity_type == 'PERSON')
-                active = context == 'present'
+                active = context in rule.conditions.get('active_contexts', ['present'])
                 findings.append({'rule': rule.code, 'name': rule.name, 'evidence': match.group()[:240],
                                  'context': context, 'active': active,
                                  'min_rank': int(rule.conditions.get('min_rank', 0)) if active else 0})

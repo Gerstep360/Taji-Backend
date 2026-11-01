@@ -12,6 +12,8 @@ class EntityPredictionSerializer(serializers.Serializer):
 
 
 class RiskPredictionSerializer(serializers.Serializer):
+    source = serializers.ChoiceField(choices=('text', 'image'), default='text')
+    attachment_id = serializers.IntegerField(min_value=1, required=False, allow_null=True, default=None)
     name = serializers.CharField(max_length=160)
     evidence = serializers.CharField(max_length=240)
     context = serializers.ChoiceField(choices=CONTEXTS)
@@ -52,6 +54,13 @@ class PriorityWriteSerializer(serializers.ModelSerializer):
         model = PriorityLevel
         fields = ('id', 'code', 'name', 'rank', 'min_score', 'max_score', 'target_minutes', 'is_active')
         read_only_fields = ('id',)
+        extra_kwargs = {'min_score': {'min_value': 0, 'max_value': 100},
+                        'max_score': {'min_value': 0, 'max_value': 100}}
+
+    def validate_code(self, value):
+        if self.instance and value != self.instance.code:
+            raise serializers.ValidationError('El código interno no se puede modificar; conserva las referencias de las reglas de seguridad.')
+        return value
 
     def validate(self, attrs):
         current = self.instance

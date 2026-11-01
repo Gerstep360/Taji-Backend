@@ -151,6 +151,16 @@ class IncidentAttachmentSerializer(serializers.ModelSerializer):
     file_type_display = serializers.CharField(source="get_file_type_display", read_only=True)
     uploaded_by = AuthorUserSummarySerializer(source="uploaded_by_user", read_only=True)
     file_url = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField()
+
+    def get_preview_url(self, obj) -> str | None:
+        request = self.context.get('request')
+        if not request or obj.file_type != IncidentAttachment.Type.IMAGE:
+            return None
+        from django.urls import reverse
+        return request.build_absolute_uri(reverse('incident-tracking-preview-attachment', kwargs={
+            'public_code':obj.incident.public_code, 'attachment_id':obj.pk,
+        }))
 
     def get_file_url(self, obj) -> str | None:
         request = self.context.get("request")
@@ -167,6 +177,7 @@ class IncidentAttachmentSerializer(serializers.ModelSerializer):
             "id",
             "file_path",
             "file_url",
+            "preview_url",
             "file_type",
             "file_type_display",
             "caption",

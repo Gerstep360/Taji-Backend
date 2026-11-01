@@ -12,8 +12,9 @@ from incidents.models import (Incident, IncidentAIAnalysis, IncidentAIEntity, In
 from .provider import analyze, ProviderFailure
 from .serializers import PredictionSerializer
 from .safety import evaluate, normalized, context_of
+from .media import prepare_images
 
-PROMPT_VERSION = 'cu22-1'
+PROMPT_VERSION = 'cu22-4-threats'
 
 
 def can_analyze(user):
@@ -26,7 +27,8 @@ def can_review(user):
 
 def snapshot(incident):
     return {'title': incident.title[:160], 'description': incident.description[:6000],
-            'location': incident.sector.name if incident.sector_id else ''}
+            'location': incident.sector.name if incident.sector_id else '',
+            'images': list(incident.attachments.filter(file_type='IMAGE').order_by('id').values('id', 'file_path')[:20])}
 
 
 def fingerprint(data):
@@ -60,20 +62,35 @@ def claim_job():
         execution_status='FAILED', error_code='worker_interrupted', finished_at=now)
     job = IncidentAIAnalysis.objects.select_for_update(skip_locked=True).filter(execution_status='QUEUED').order_by('created_at', 'id').first()
     if job:
-        job.execution_status = 'RUNNING'
-        job.started_at = now
-        job.save(update_fields=('execution_status', 'started_at'))
+        updates = {'execution_status': 'RUNNING', 'started_at': now,
+                   'model_name': settings.NVIDIA['MODEL'][:100], 'model_version': PROMPT_VERSION}
+        # Compatibilidad con trabajos encolados antes del soporte multimodal.
+        if 'images' not in job.input_snapshot:
+            current = snapshot(job.incident)
+            old = {key: current[key] for key in ('title', 'description', 'location')}
+            if old == job.input_snapshot:
+                updates.update(input_snapshot=current, text_hash=fingerprint(current))
+        if not IncidentAIAnalysis.objects.filter(pk=job.pk, execution_status='QUEUED').update(**updates):
+            return None
+        job.refresh_from_db()
     return job
 
 
 def process_job(job):
     started = monotonic()
     original = {}
+    findings, floor, score = [], 0, 0
+    rules = []
     try:
+        text = job.input_snapshot['title'] + '\n' + job.input_snapshot['description']
+        rules = list(RiskRule.objects.filter(is_active=True))
+        findings, floor, score = evaluate(text, rules)
         categories = list(IncidentCategory.objects.filter(is_active=True).values('code', 'name', 'description'))
         priorities = list(PriorityLevel.objects.filter(is_active=True).values('code', 'name', 'rank'))
-        prediction, raw = analyze(job.input_snapshot, categories, priorities)
-        original = {'prediction': prediction, 'provider_content': raw}
+        images, media_manifest = prepare_images(job.input_snapshot.get('images', []),
+            storage_prefix=f'incidents/{job.incident.condominium_id}/{job.incident_id}/')
+        prediction, raw = analyze(job.input_snapshot, categories, priorities, images=images)
+        original = {'prediction': prediction, 'provider_content': raw, 'media': media_manifest}
         validator = PredictionSerializer(data=prediction)
         if not validator.is_valid():
             raise ProviderFailure('invalid_response')
@@ -82,14 +99,24 @@ def process_job(job):
         priority = PriorityLevel.objects.filter(code=data['priority_code'], is_active=True).first()
         if not category or not priority:
             raise ProviderFailure('unknown_catalog_value')
-        text = job.input_snapshot['title'] + '\n' + job.input_snapshot['description']
         evidence_text = normalized(text + '\n' + job.input_snapshot.get('location', ''))
-        if any(normalized(e['text']) not in evidence_text for e in data['entities']) or any(normalized(r['evidence']) not in evidence_text for r in data['risks']):
+        if any(normalized(e['text']) not in evidence_text for e in data['entities']) or any(normalized(r['evidence']) not in evidence_text for r in data['risks'] if r['source'] == 'text'):
             raise ProviderFailure('ungrounded_evidence')
-        rules = list(RiskRule.objects.filter(is_active=True))
-        findings, floor, score = evaluate(text, rules)
+        sent_ids = {image['id'] for image in images}
+        if any(r['attachment_id'] not in sent_ids for r in data['risks'] if r['source'] == 'image'):
+            raise ProviderFailure('ungrounded_image')
+        visual_text = '. '.join(r['name'] + ': ' + r['evidence'] for r in data['risks'] if r['source'] == 'image' and r['context'] == 'present')
+        if visual_text:
+            visual_findings, visual_floor, visual_score = evaluate(visual_text, rules)
+            for finding in visual_findings:
+                finding['source'] = 'image'
+            findings.extend(visual_findings)
+            floor = max(floor, visual_floor)
+            score = max(score, visual_score)
         import re
         for risk in data['risks']:
+            if risk['source'] == 'image':
+                continue
             evidence = normalized(risk['evidence'])
             start = normalized(text).find(evidence)
             if start >= 0:
@@ -143,9 +170,15 @@ def process_job(job):
     except Exception:
         # No se registran reportes, respuesta del proveedor ni excepciones con credenciales.
         code = 'analysis_failed'
+    # Una caída del proveedor no debe ocultar peligros explícitos del reporte.
+    safe_priority = PriorityLevel.objects.filter(is_active=True, rank__gte=floor).order_by('rank').first() if floor else None
+    active_codes = {f['rule'] for f in findings if f['active']}
+    safe_actions = list(dict.fromkeys(action for rule in rules if rule.code in active_codes
+        for action in rule.conditions.get('safe_actions', [])))[:8]
     IncidentAIAnalysis.objects.filter(pk=job.pk, execution_status='RUNNING').update(
         execution_status='FAILED', error_code=code, finished_at=timezone.now(),
-        raw_output=original,
+        raw_output=original, safety_findings=findings, suggested_priority=safe_priority,
+        risk_score=score if floor else None, suggested_action='\n'.join(safe_actions),
         duration_ms=int((monotonic() - started) * 1000))
     job.refresh_from_db()
     record_audit_event(action_code='INCIDENT_AI_FAILED', resource_type='IncidentAIAnalysis', resource_id=job.pk,
@@ -165,9 +198,13 @@ def review_analysis(analysis, user, category, priority, reason, safety_override=
         raise ValidationError('Este análisis ya fue revisado. Solicita uno nuevo si cambió la información.')
     if incident.ai_analyses.order_by('-id').values_list('pk', flat=True).first() != analysis.pk:
         raise ValidationError('Hay un análisis más reciente. Revisa la propuesta actual.')
-    if analysis.text_hash != fingerprint(snapshot(incident)):
+    current_snapshot = snapshot(incident)
+    if 'images' not in analysis.input_snapshot:
+        current_snapshot.pop('images')
+    if analysis.text_hash != fingerprint(current_snapshot):
         raise ValidationError('El reporte cambió. Solicita un análisis actualizado.')
     _, floor, _ = evaluate(incident.title + '\n' + incident.description, RiskRule.objects.filter(is_active=True))
+    floor = max(floor, max((f.get('min_rank', 0) for f in analysis.safety_findings if f.get('active') and f.get('source') == 'image'), default=0))
     if priority.rank < floor and not (safety_override and len(reason.strip()) >= 20):
         raise ValidationError({'priority': 'Las señales de seguridad requieren una prioridad mayor. Para corregir un falso positivo, confirma la excepción y explica el motivo (20 caracteres).'} )
     review = IncidentAIReview.objects.create(analysis=analysis, reviewer=user, category=category,
@@ -202,8 +239,9 @@ def presentation(row, user):
         'priority': {'id': priority.pk, 'name': priority.name, 'rank': priority.rank} if priority else None,
         'confidence': row.confidence, 'risk_score': row.risk_score,
         'summary': predicted.get('summary', ''), 'risks': predicted.get('risks', []),
-        'recommendations': predicted.get('recommendations', []), 'safety_findings': row.safety_findings,
+        'recommendations': predicted.get('recommendations', row.suggested_action.splitlines()), 'safety_findings': row.safety_findings,
         'entities': list(row.entities.values('entity_type', 'text_value', 'normalized_value')),
+        'media': row.raw_output.get('media', []),
         'can_analyze': can_analyze(user), 'can_review': can_review(user),
         'review': {'reason': human.reason, 'reviewed_at': human.created_at, 'reviewer': human.reviewer.person.full_name if human.reviewer else 'Usuario'} if human else None,
     }

@@ -8,6 +8,7 @@ import time
 from uuid import uuid4
 import httpx
 from django.db import close_old_connections
+from django.conf import settings
 from accounts.models import User
 from condominiums.models import Condominium
 from incidents.models import Incident, IncidentAIAnalysis
@@ -33,6 +34,8 @@ def run():
             time.sleep(.5)
         if job.execution_status != 'SUCCEEDED':
             raise RuntimeError('El trabajador no completó la prueba: ' + job.error_code)
+        if job.model_name != settings.NVIDIA['MODEL']:
+            raise RuntimeError('El trabajador está usando otra configuración de modelo. Reinicia el proceso trabajador.')
         if job.suggested_priority.rank < 3 or not job.raw_output.get('prediction'):
             raise RuntimeError('La prueba no conservó la predicción o la regla de seguridad.')
         health_times = []
@@ -50,7 +53,10 @@ def run():
             response.raise_for_status()
             if response.json()['analyses'][0]['execution_status'] != 'SUCCEEDED':
                 raise RuntimeError('El endpoint no devolvió el análisis persistido.')
+            if not response.json().get('processor', {}).get('available'):
+                raise RuntimeError('La API no detecta al procesador activo.')
         result = {'queue_ms':queue_ms,'worker_duration_ms':job.duration_ms,
+            'model':job.model_name,'processor_available':True,
             'end_to_end_ms':round((time.monotonic()-start)*1000),
             'category':job.suggested_category.code,'priority':job.suggested_priority.code,
             'original_prediction_preserved':True,'authenticated_http_status':response.status_code,

@@ -93,6 +93,51 @@ class IncidentAITests(IncidentTrackingTestCase):
         self.assertEqual(self.incident.priority_id,previous)
         self.assertEqual(row.raw_output['prediction']['priority_code'],'LOW')
 
+    def test_game_or_meme_cannot_hide_a_shooting_even_when_model_says_low(self):
+        self.incident.title = 'Reporte de seguridad'
+        self.incident.description = '2 chicos estan haciendo six seven y el que pierde es disparado en la pierna'
+        self.incident.save()
+        prediction = {**self.prediction, 'entities': [], 'risks': [], 'summary': 'Juego entre chicos.'}
+        result = self.finish(prediction)
+        self.assertEqual(result.execution_status, 'SUCCEEDED', result.error_code)
+        self.assertEqual(result.suggested_priority.code, 'CRITICAL')
+        self.assertEqual(result.risk_score, 100)
+        self.assertEqual(result.raw_output['prediction']['priority_code'], 'LOW')
+        self.assertTrue(any(f['rule'] == 'CU22_FIREARM_HARM' and f['active'] for f in result.safety_findings))
+        with self.assertRaises(ValidationError):
+            review_analysis(result, self.admin_user, self.category, self.low, 'Parece un juego sin importancia')
+
+    def test_violence_context_controls_do_not_minimize_real_threats(self):
+        rules = RiskRule.objects.filter(is_active=True)
+        cases = [
+            ('Se escuchan disparos en el pasillo.', 4),
+            ('Ayer un vecino fue baleado.', 4),
+            ('Amenazan con matar a un vecino.', 4),
+            ('Hay una hemorragia en la pierna.', 4),
+            ('No hay disparos en el pasillo.', 0),
+            ('Nadie fue disparado en la pierna.', 0),
+            ('Simulacro de tiroteo en la portería.', 0),
+            ('No hubo disparos ayer pero ahora hay una balacera.', 4),
+            ('Dos chicos hacen six seven en el patio.', 0),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(evaluate(text, rules)[1], expected)
+
+    def test_provider_timeout_keeps_critical_local_safety_alert(self):
+        self.incident.title = 'Reporte de seguridad'
+        self.incident.description = 'Hay un vecino baleado en el pasillo.'
+        self.incident.save()
+        enqueue(self.incident, self.admin_user)
+        with patch(SERVICE, side_effect=ProviderFailure('timeout')):
+            result = process_job(claim_job())
+        self.assertEqual(result.execution_status, 'FAILED')
+        self.assertEqual(result.error_code, 'timeout')
+        self.assertEqual(result.suggested_priority.code, 'CRITICAL')
+        self.assertTrue(result.safety_findings)
+        self.assertTrue(result.suggested_action)
+        self.assertIsNone(result.confidence)
+
     def test_negations_drills_and_distant_children_are_contextual(self):
         rules = RiskRule.objects.filter(is_active=True)
         for text in ['No hay incendio. Los niños están lejos.','Simulacro de incendio en el pasillo.','Los niños están lejos.']:
@@ -182,3 +227,43 @@ class IncidentAITests(IncidentTrackingTestCase):
         self.assertTrue(response.data['code'].startswith('NUEVO-TIPO_'))
         self.assertEqual(self.client.patch(url, {'name':'Inválido'}).status_code,405)
         self.assertEqual(self.client.post(url+str(response.data['id'])+'/', {'name':'Inválido'}).status_code,405)
+
+    def test_catalog_edit_deactivate_reactivate_preserves_references(self):
+        self.admin_user.is_superuser = True
+        self.admin_user.save()
+        root = '/api/v1/paquete3/incident-ai/catalogs/'
+        url = root + f'categories/{self.category.pk}/'
+        original_code = self.category.code
+        response = self.client.patch(url, {'name': 'Fuego y humo revisado', 'description': 'Fuego, humo y señales de combustión', 'default_staff_type': 'SECURITY'}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['code'], original_code)
+        self.assertEqual(response.data['default_staff_type'], 'SECURITY')
+        self.assertEqual(self.client.patch(url, {'is_active': False}, format='json').status_code, 200)
+        default = self.client.get(root).data
+        self.assertNotIn(self.category.pk, [row['id'] for row in default['categories']])
+        all_rows = self.client.get(root, {'include_inactive': 'true'}).data
+        self.assertIn(self.category.pk, [row['id'] for row in all_rows['categories']])
+        self.assertTrue(all_rows['staff_types'])
+        self.incident.refresh_from_db()
+        self.assertEqual(self.incident.category_id, self.category.pk)
+        self.assertEqual(self.client.patch(url, {'is_active': True}, format='json').status_code, 200)
+        self.auth(self.resident_user)
+        self.assertEqual(self.client.get(root, {'include_inactive': 'true'}).status_code, 403)
+        self.assertEqual(self.client.patch(url, {'name': 'Sin autorización'}, format='json').status_code, 403)
+
+    def test_priority_edit_validates_range_and_preserves_code(self):
+        self.admin_user.is_superuser = True
+        self.admin_user.save()
+        url = f'/api/v1/paquete3/incident-ai/catalogs/priorities/{self.priority.pk}/'
+        self.assertEqual(self.client.patch(url, {'target_minutes': 90}, format='json').status_code, 200)
+        self.assertEqual(self.client.patch(url, {'code': 'BROKEN'}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(url, {'min_score': 80, 'max_score': 20}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(url, {'max_score': 101}, format='json').status_code, 400)
+
+    def test_ai_metrics_count_pending_and_processing_without_other_tenants(self):
+        url = '/api/v1/paquete3/incident-ai/metrics/'
+        enqueue(self.incident, self.admin_user)
+        data = self.client.get(url).data
+        self.assertEqual(data['processing'], 1)
+        self.assertEqual(data['pending_review'], 0)
+        self.assertEqual(data['period_days'], 30)

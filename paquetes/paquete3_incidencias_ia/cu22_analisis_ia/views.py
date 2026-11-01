@@ -10,11 +10,12 @@ from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 from auditlog.services import record_audit_event
-from incidents.models import IncidentAIAnalysis, IncidentCategory, PriorityLevel
+from incidents.models import IncidentAIAnalysis, IncidentCategory, PriorityLevel, STAFF_TYPE_CHOICES
 from paquetes.paquete3_incidencias_ia.cu19_seguimiento_historial.permissions import CanAccessIncidentTracking
 from paquetes.paquete3_incidencias_ia.cu19_seguimiento_historial.services import IncidentTrackingService
 from .services import enqueue, presentation, can_analyze, can_review, review_analysis
 from .serializers import ReviewSerializer, CategoryWriteSerializer, PriorityWriteSerializer
+from .worker import processor_status
 
 
 class AnalysisThrottle(UserRateThrottle):
@@ -30,7 +31,8 @@ class IncidentAIView(APIView):
         rows = incident.ai_analyses.select_related('suggested_category', 'suggested_priority', 'human_review__category',
             'human_review__priority', 'human_review__reviewer__person').prefetch_related('entities').order_by('-id')[:5]
         return Response({'analyses': [presentation(row, request.user) for row in rows],
-            'can_analyze': can_analyze(request.user), 'can_review': can_review(request.user)})
+            'can_analyze': can_analyze(request.user), 'can_review': can_review(request.user),
+            'processor': processor_status()})
 
     @extend_schema(request=None, responses={202: dict})
     def post(self, request, public_code):
@@ -60,9 +62,18 @@ class IncidentAICatalogView(APIView):
 
     @extend_schema(responses={200: dict})
     def get(self, request):
+        include_inactive = request.query_params.get('include_inactive') == 'true'
+        if include_inactive and not request.user.is_superuser:
+            raise PermissionDenied('Solo la cuenta global puede consultar valores inactivos.')
+        categories = IncidentCategory.objects.all()
+        priorities = PriorityLevel.objects.all()
+        if not include_inactive:
+            categories = categories.filter(is_active=True)
+            priorities = priorities.filter(is_active=True)
         return Response({
-            'categories': CategoryWriteSerializer(IncidentCategory.objects.filter(is_active=True).order_by('name'), many=True).data,
-            'priorities': PriorityWriteSerializer(PriorityLevel.objects.filter(is_active=True).order_by('rank'), many=True).data,
+            'categories': CategoryWriteSerializer(categories.order_by('name'), many=True).data,
+            'priorities': PriorityWriteSerializer(priorities.order_by('rank'), many=True).data,
+            'staff_types': [{'code': code, 'name': name} for code, name in STAFF_TYPE_CHOICES],
             'can_manage': request.user.is_superuser,
         })
 
@@ -111,7 +122,10 @@ class IncidentAIMetricsView(APIView):
         rows = IncidentAIAnalysis.objects.filter(incident__condominium_id=tenant_id,
             created_at__gte=timezone.now() - timedelta(days=30)) if tenant_id else IncidentAIAnalysis.objects.none()
         data = rows.aggregate(total=Count('id'), failed=Count('id', filter=Q(execution_status='FAILED')),
+            pending_review=Count('id', filter=Q(execution_status__in=('SUCCEEDED', 'FAILED'), review_status='PENDING')),
+            processing=Count('id', filter=Q(execution_status__in=('QUEUED', 'RUNNING'))),
             reviewed=Count('id', filter=Q(review_status__in=('ACCEPTED', 'CORRECTED'))),
             accepted=Count('id', filter=Q(review_status='ACCEPTED')), mean_duration_ms=Avg('duration_ms'))
         data['acceptance_rate'] = round(data['accepted'] / data['reviewed'], 3) if data['reviewed'] else None
+        data['period_days'] = 30
         return Response(data)

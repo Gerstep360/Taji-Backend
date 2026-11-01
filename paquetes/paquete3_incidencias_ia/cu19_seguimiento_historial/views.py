@@ -78,6 +78,35 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
         response["X-Content-Type-Options"] = "nosniff"
         return response
 
+    @extend_schema(responses={(200, 'image/jpeg'): OpenApiTypes.BINARY, (200, 'image/png'): OpenApiTypes.BINARY, (200, 'image/webp'): OpenApiTypes.BINARY})
+    @action(detail=True, methods=['get'], url_path=r'attachments/(?P<attachment_id>\d+)/preview')
+    def preview_attachment(self, request, public_code=None, attachment_id=None):
+        from pathlib import PurePosixPath
+        from django.core.files.storage import default_storage
+        from django.http import FileResponse, Http404
+        from PIL import Image
+        incident = self.get_object()
+        attachment = incident.attachments.filter(pk=attachment_id, file_type='IMAGE').first()
+        prefix = f'incidents/{incident.condominium_id}/{incident.pk}/'
+        if (not attachment or not attachment.file_path.startswith(prefix) or '..' in attachment.file_path.split('/')
+                or '\\' in attachment.file_path):
+            raise Http404('La imagen no está disponible.')
+        try:
+            with default_storage.open(attachment.file_path, 'rb') as source:
+                with Image.open(source) as image:
+                    mime = {'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}.get(image.format)
+                    if image.width * image.height > 20000000:
+                        raise Http404('La imagen supera el límite de dimensiones de vista previa.')
+            if not mime:
+                raise Http404('Formato de imagen no compatible.')
+            response = FileResponse(default_storage.open(attachment.file_path, 'rb'), as_attachment=False,
+                filename=PurePosixPath(attachment.file_path).name, content_type=mime)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            raise Http404('La imagen no está disponible.') from None
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
     @extend_schema(responses=AttentionAlertSerializer(many=True), filters=False)
     @action(detail=False, methods=["get"], pagination_class=None)
     def alerts(self, request):

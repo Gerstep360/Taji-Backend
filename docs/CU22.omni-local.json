@@ -1,0 +1,19 @@
+{
+  "queue_ms": 16,
+  "worker_duration_ms": 2234,
+  "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  "processor_available": true,
+  "end_to_end_ms": 3250,
+  "category": "FIRE",
+  "priority": "HIGH",
+  "original_prediction_preserved": true,
+  "authenticated_http_status": 200,
+  "health_response_ms": [
+    16,
+    0,
+    0,
+    0,
+    16
+  ],
+  "synthetic_fixture_removed": true
+}
