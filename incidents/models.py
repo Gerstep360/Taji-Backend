@@ -69,6 +69,16 @@ class Incident(models.Model):
         CANCELLED = "CANCELLED", "Cancelada"
 
     public_code = models.CharField(max_length=30, unique=True)
+    # Condominio (tenant) dueño de la incidencia y correlativo interno usado para
+    # generar `public_code`. Son nulos solo en filas anteriores a CU18.
+    condominium = models.ForeignKey(
+        "condominiums.Condominium",
+        on_delete=models.PROTECT,
+        related_name="incidents",
+        null=True,
+        blank=True,
+    )
+    condominium_sequence = models.PositiveIntegerField(null=True, blank=True, editable=False)
     reporter_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.SET_NULL,
@@ -128,7 +138,14 @@ class Incident(models.Model):
 
     class Meta:
         db_table = "incident"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("condominium", "condominium_sequence"),
+                name="uq_incident_condo_sequence",
+            )
+        ]
         indexes = [
+            models.Index(fields=("condominium", "-created_at"), name="idx_inc_condo_time"),
             models.Index(
                 fields=("status", "priority", "-created_at"),
                 name="idx_inc_status_priority",
