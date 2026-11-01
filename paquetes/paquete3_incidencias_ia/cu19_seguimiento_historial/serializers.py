@@ -6,6 +6,7 @@ públicos e internos (T037) y cálculo de fechas objetivo y SLA (T038).
 """
 
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from accounts.models import User
 from condominiums.models import Resident, Sector, Staff, Unit
 from incidents.models import (
@@ -21,6 +22,7 @@ from .permissions import (
     can_change_incident_status,
     can_modify_target_date,
     can_view_internal_comments,
+    can_post_internal_comments,
 )
 
 
@@ -148,12 +150,23 @@ class IncidentAttachmentSerializer(serializers.ModelSerializer):
 
     file_type_display = serializers.CharField(source="get_file_type_display", read_only=True)
     uploaded_by = AuthorUserSummarySerializer(source="uploaded_by_user", read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    def get_file_url(self, obj) -> str | None:
+        request = self.context.get("request")
+        if not request:
+            return None
+        from django.urls import reverse
+        return request.build_absolute_uri(reverse("incident-tracking-download-attachment", kwargs={
+            "public_code": obj.incident.public_code, "attachment_id": obj.pk,
+        }))
 
     class Meta:
         model = IncidentAttachment
         fields = (
             "id",
             "file_path",
+            "file_url",
             "file_type",
             "file_type_display",
             "caption",
@@ -218,7 +231,7 @@ class IncidentListSerializer(serializers.ModelSerializer):
 
     def get_latest_status_change(self, obj) -> dict | None:
         history = getattr(obj, "status_history", None)
-        latest = history.all().order_by("-changed_at", "-id").first() if history else None
+        latest = max(history.all(), key=lambda item: (item.changed_at, item.pk), default=None) if history else None
         if not latest:
             return None
         return {
@@ -243,6 +256,11 @@ class IncidentDetailSerializer(IncidentListSerializer):
     can_view_internal_comments = serializers.SerializerMethodField()
     can_change_status = serializers.SerializerMethodField()
     can_modify_target_date = serializers.SerializerMethodField()
+    can_post_internal_comments = serializers.SerializerMethodField()
+
+    def get_can_post_internal_comments(self, obj) -> bool:
+        request = self.context.get("request")
+        return can_post_internal_comments(request.user) if request else False
 
     class Meta(IncidentListSerializer.Meta):
         fields = IncidentListSerializer.Meta.fields + (
@@ -254,20 +272,24 @@ class IncidentDetailSerializer(IncidentListSerializer):
             "can_view_internal_comments",
             "can_change_status",
             "can_modify_target_date",
+            "can_post_internal_comments",
         )
 
+    @extend_schema_field(IncidentStatusHistorySerializer(many=True))
     def get_status_history(self, obj):
         records = obj.status_history.select_related(
             "changed_by_user__person", "changed_by_user__role"
         ).order_by("changed_at", "id")
         return IncidentStatusHistorySerializer(records, many=True).data
 
+    @extend_schema_field(IncidentCommentSerializer(many=True))
     def get_public_comments(self, obj):
         comments = obj.comments.filter(visibility=IncidentComment.Visibility.PUBLIC).select_related(
             "author_user__person", "author_user__role"
         ).order_by("created_at")
         return IncidentCommentSerializer(comments, many=True).data
 
+    @extend_schema_field(IncidentCommentSerializer(many=True))
     def get_internal_comments(self, obj):
         request = self.context.get("request")
         user = request.user if request else None
@@ -342,8 +364,8 @@ class IncidentFilterQuerySerializer(serializers.Serializer):
         required=False,
         help_text="Filtro de SLA: vencidas (overdue), pendientes (pending), a tiempo (on_time), resueltas (resolved).",
     )
-    is_overdue = serializers.BooleanField(required=False, help_text="Filtrar específicamente si está vencida.")
-    is_pending = serializers.BooleanField(required=False, help_text="Filtrar solo pendientes.")
+    is_overdue = serializers.BooleanField(required=False, default=None, allow_null=True, help_text="Filtrar específicamente si está vencida.")
+    is_pending = serializers.BooleanField(required=False, default=None, allow_null=True, help_text="Filtrar solo pendientes.")
     scope = serializers.ChoiceField(
         choices=("GLOBAL", "PROPIAS", "ASIGNADAS", "IMPORTANTES"),
         required=False,

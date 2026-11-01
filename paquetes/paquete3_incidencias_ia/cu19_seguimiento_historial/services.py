@@ -82,7 +82,7 @@ class IncidentTrackingService:
 
         membership = getattr(user, "tenant_memberships", None)
         if membership:
-            active_m = membership.filter(is_default=True).first()
+            active_m = membership.filter(is_default=True, is_active=True).first()
             if active_m and active_m.condominium_id:
                 return active_m.condominium_id
         return None
@@ -116,13 +116,19 @@ class IncidentTrackingService:
             "current_assignee_staff__person",
             "sector",
             "unit",
-        ).prefetch_related("status_history", "comments", "attachments").order_by("-created_at")
+        ).prefetch_related("status_history__changed_by_user__person").order_by("-created_at", "-id")
+
+        tenant_id = cls.get_user_condominium_id(user)
+        if tenant_id:
+            queryset = queryset.filter(condominium_id=tenant_id)
+        elif not (user.is_superuser and TenantContext.is_global()):
+            return queryset.none()
 
         # Control de alcance por rol
         scope = cls.resolve_user_scope(user, filters.get("scope"))
         person = getattr(user, "person", None)
 
-        if scope == "PROPIAS" or is_resident_user(user) and not is_admin_user(user):
+        if scope == "PROPIAS":
             q_filter = Q(reporter_user=user)
             if person:
                 q_filter |= Q(reporter_resident__person=person)
@@ -174,8 +180,23 @@ class IncidentTrackingService:
             sla_lower = sla_status.lower()
             if sla_lower == "overdue":
                 queryset = queryset.filter(status__in=OPEN_STATUSES, due_at__isnull=False, due_at__lt=now)
-            elif sla_lower == "ontime":
+            elif sla_lower in ("ontime", "on_time"):
                 queryset = queryset.filter(status__in=OPEN_STATUSES).filter(Q(due_at__isnull=True) | Q(due_at__gte=now))
+            elif sla_lower == "pending":
+                queryset = queryset.filter(status__in=OPEN_STATUSES)
+            elif sla_lower == "resolved":
+                queryset = queryset.filter(status__in=CLOSED_STATUSES)
+
+        if filters.get("is_overdue") is not None:
+            overdue = Q(status__in=OPEN_STATUSES, due_at__lt=now)
+            queryset = queryset.filter(overdue) if filters["is_overdue"] else queryset.exclude(overdue)
+        for key, lookup in {
+            "sector": "sector_id", "unit": "unit_id", "assignee": "current_assignee_staff_id",
+            "due_from": "due_at__gte", "due_to": "due_at__lte",
+            "created_from": "created_at__gte", "created_to": "created_at__lte",
+        }.items():
+            if key in filters:
+                queryset = queryset.filter(**{lookup: filters[key]})
 
         search_q = filters.get("search")
         if search_q:
@@ -214,16 +235,8 @@ class IncidentTrackingService:
         except Incident.DoesNotExist:
             raise NotFound("La incidencia solicitada no existe.")
 
-        # Verificar permisos de lectura/acceso
-        if is_resident_user(user) and not is_admin_user(user):
-            person = getattr(user, "person", None)
-            is_reporter = (
-                incident.reporter_user_id == user.id
-                or (person and incident.reporter_resident and incident.reporter_resident.person_id == person.id)
-            )
-            if not is_reporter:
-                raise PermissionDenied("No tienes permiso para ver esta incidencia.")
-
+        if not cls.list_incidents(user, {}).filter(pk=incident.pk).exists():
+            raise NotFound("La incidencia solicitada no está disponible en tu alcance.")
         return incident
 
     @classmethod
@@ -269,6 +282,7 @@ class IncidentTrackingService:
         comment: str = "",
         request=None,
     ) -> tuple[Incident, IncidentStatusHistory]:
+        incident = Incident.objects.select_for_update().get(pk=incident.pk)
         if new_status not in Incident.Status.values:
             raise ValidationError({"status": f"Estado inválido: {new_status}"})
 
@@ -278,8 +292,24 @@ class IncidentTrackingService:
         if not can_change_incident_status(user, incident, new_status):
             raise PermissionDenied("No tienes permiso para cambiar la incidencia a este estado.")
 
+        if new_status not in VALID_TRANSITIONS.get(incident.status, ()):
+            raise ValidationError({"status": "Esta transición no está permitida."})
+        if new_status in (Incident.Status.ASSIGNED, Incident.Status.IN_PROGRESS) and not incident.current_assignee_staff_id:
+            raise ValidationError({"status": "Primero asigna una persona responsable."})
+
         old_status = incident.status
         incident.status = new_status
+        if new_status in OPEN_STATUSES:
+            incident.resolved_at = None
+            incident.closed_at = None
+
+        if new_status in CLOSED_STATUSES:
+            incident.assignments.filter(ended_at__isnull=True).update(ended_at=timezone.now())
+        elif old_status in CLOSED_STATUSES and incident.current_assignee_staff_id:
+            IncidentAssignment.objects.create(
+                incident=incident, assigned_to_staff=incident.current_assignee_staff,
+                assigned_by_user=user, reason="Reapertura de incidencia",
+            )
 
         if new_status == Incident.Status.RESOLVED and not incident.resolved_at:
             incident.resolved_at = timezone.now()
@@ -298,9 +328,10 @@ class IncidentTrackingService:
 
         try:
             record_audit_event(
-                user=user,
-                action="INCIDENT_STATUS_CHANGE",
-                target=incident,
+                actor_user=user,
+                action_code="INCIDENT_STATUS_CHANGE",
+                resource_type="Incident", resource_id=incident.pk,
+                before_data={"status": old_status}, after_data={"status": new_status},
                 description=f"Incidencia {incident.public_code} cambió de {old_status} a {new_status}",
                 request=request,
             )
@@ -331,9 +362,9 @@ class IncidentTrackingService:
 
         try:
             record_audit_event(
-                user=user,
-                action="INCIDENT_COMMENT_ADD",
-                target=incident,
+                actor_user=user,
+                action_code="INCIDENT_COMMENT_ADD",
+                resource_type="Incident", resource_id=incident.pk,
                 description=f"Nuevo comentario ({vis}) en incidencia {incident.public_code}",
                 request=request,
             )
@@ -352,6 +383,8 @@ class IncidentTrackingService:
         qs = incident.comments.select_related("author_user__person").order_by("created_at")
 
         if not can_view_internal_comments(user):
+            if visibility and visibility.upper() == IncidentComment.Visibility.INTERNAL:
+                raise PermissionDenied("Los comentarios internos solo están disponibles para el equipo autorizado.")
             qs = qs.filter(visibility=IncidentComment.Visibility.PUBLIC)
 
         if visibility:
@@ -382,9 +415,9 @@ class IncidentTrackingService:
 
         try:
             record_audit_event(
-                user=user,
-                action="INCIDENT_SET_TARGET_DATE",
-                target=incident,
+                actor_user=user,
+                action_code="INCIDENT_SET_TARGET_DATE",
+                resource_type="Incident", resource_id=incident.pk,
                 description=f"Fecha objetivo actualizada para incidencia {incident.public_code}",
                 request=request,
             )

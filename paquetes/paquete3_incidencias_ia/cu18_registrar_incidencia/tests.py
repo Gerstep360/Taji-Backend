@@ -494,9 +494,9 @@ class IncidentCatalogTests(IncidentFixtureMixin, APITestCase):
             self.client.force_authenticate(user=None)
             self.assertEqual(self.client.get(f"{URL}{path}").status_code, 401)
 
-    def test_no_list_or_detail_endpoints_are_exposed(self):
+    def test_tracking_list_coexists_with_registration(self):
         self.client.force_authenticate(user=self.admin)
-        self.assertEqual(self.client.get(URL).status_code, 405)
+        self.assertEqual(self.client.get(URL).status_code, 200)
 
 
 @skipUnless(connection.vendor == "postgresql", "La concurrencia real de filas requiere PostgreSQL.")

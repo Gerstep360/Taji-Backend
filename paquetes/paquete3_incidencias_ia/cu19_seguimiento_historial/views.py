@@ -31,6 +31,16 @@ from .serializers import (
     SetTargetDateRequestSerializer,
 )
 from .services import IncidentTrackingService
+from drf_spectacular.types import OpenApiTypes
+from condominiums.models import Staff
+from .permissions import is_admin_user
+from paquetes.paquete3_incidencias_ia.cu21_ciclo_atencion.services import (
+    allowed_transitions, assign_incident, attention_alerts,
+)
+from paquetes.paquete3_incidencias_ia.cu21_ciclo_atencion.serializers import (
+    AssignmentRequestSerializer, AttentionAlertSerializer, AssigneeOptionSerializer,
+    TransitionOptionSerializer,
+)
 
 
 @extend_schema_view(
@@ -52,6 +62,49 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
     lookup_field = "public_code"
     lookup_url_kwarg = "public_code"
     lookup_value_regex = r"[^/]+"
+
+    @extend_schema(responses={(200, "application/octet-stream"): OpenApiTypes.BINARY})
+    @action(detail=True, methods=["get"], url_path=r"attachments/(?P<attachment_id>\d+)/download")
+    def download_attachment(self, request, public_code=None, attachment_id=None):
+        from django.core.files.storage import default_storage
+        from django.http import FileResponse, Http404
+        from pathlib import PurePosixPath
+        incident = self.get_object()
+        attachment = incident.attachments.filter(pk=attachment_id).first()
+        if not attachment or not default_storage.exists(attachment.file_path):
+            raise Http404("La evidencia no está disponible.")
+        response = FileResponse(default_storage.open(attachment.file_path, "rb"), as_attachment=True,
+                                filename=PurePosixPath(attachment.file_path).name)
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @extend_schema(responses=AttentionAlertSerializer(many=True), filters=False)
+    @action(detail=False, methods=["get"], pagination_class=None)
+    def alerts(self, request):
+        return Response(attention_alerts(request.user))
+
+    @extend_schema(responses=AssigneeOptionSerializer(many=True), filters=False)
+    @action(detail=False, methods=["get"], pagination_class=None)
+    def assignees(self, request):
+        if not is_admin_user(request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+        tenant_id = IncidentTrackingService.get_user_condominium_id(request.user)
+        rows = Staff.objects.filter(condominium_id=tenant_id, status="ACTIVE").select_related("person") if tenant_id else Staff.objects.none()
+        return Response([{"id": row.pk, "name": row.person.full_name} for row in rows])
+
+    @extend_schema(responses=TransitionOptionSerializer(many=True), filters=False)
+    @action(detail=True, methods=["get"])
+    def transitions(self, request, public_code=None):
+        return Response(allowed_transitions(self.get_object(), request.user))
+
+    @extend_schema(request=AssignmentRequestSerializer, responses=IncidentDetailSerializer)
+    @action(detail=True, methods=["post"])
+    def assign(self, request, public_code=None):
+        data = AssignmentRequestSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        incident = assign_incident(self.get_object(), request.user, request=request, **data.validated_data)
+        return Response(IncidentDetailSerializer(incident, context={"request": request}).data)
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -234,6 +287,13 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
         if request.method == "POST":
             serializer = CreateAttachmentRequestSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
+
+            from pathlib import PurePosixPath
+            from rest_framework.exceptions import ValidationError
+            file_path = serializer.validated_data["file_path"]
+            prefix = f"incidents/{incident.condominium_id}/{incident.pk}/"
+            if not file_path.startswith(prefix) or ".." in PurePosixPath(file_path).parts or "\\" in file_path:
+                raise ValidationError({"file_path": "La evidencia debe pertenecer a esta incidencia."})
 
             attachment = IncidentAttachment.objects.create(
                 incident=incident,

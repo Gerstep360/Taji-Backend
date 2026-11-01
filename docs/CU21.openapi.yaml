@@ -1,0 +1,1782 @@
+openapi: 3.0.3
+info:
+  title: Taji API
+  version: 1.0.0
+  description: API REST de Taji para autenticación, RBAC y los módulos del condominio.
+    La aplicación móvil usa Bearer JWT y la web cookies HttpOnly.
+paths:
+  /incidents/:
+    get:
+      operationId: incidents_list
+      description: 'Paso 1-14: Listar incidencias en el tablero según el rol y filtros.'
+      summary: Tablero de incidencias con filtros y SLA (Paso 1-14)
+      parameters:
+      - in: query
+        name: assignee
+        schema:
+          type: integer
+      - in: query
+        name: category
+        schema:
+          type: string
+          minLength: 1
+        description: Código o ID de categoría.
+      - in: query
+        name: created_from
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: created_to
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: due_from
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: due_to
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: is_overdue
+        schema:
+          type: boolean
+          nullable: true
+        description: Filtrar específicamente si está vencida.
+      - in: query
+        name: is_pending
+        schema:
+          type: boolean
+          nullable: true
+        description: Filtrar solo pendientes.
+      - in: query
+        name: ordering
+        schema:
+          type: string
+          minLength: 1
+          default: -created_at
+      - name: page
+        required: false
+        in: query
+        description: Un número de página dentro del conjunto de resultados paginado.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Número de resultados a devolver por página.
+        schema:
+          type: integer
+      - in: query
+        name: priority
+        schema:
+          type: string
+          minLength: 1
+        description: Código (LOW, MEDIUM, HIGH, CRITICAL) o ID.
+      - in: query
+        name: scope
+        schema:
+          enum:
+          - GLOBAL
+          - PROPIAS
+          - ASIGNADAS
+          - IMPORTANTES
+          type: string
+          minLength: 1
+        description: |-
+          Alcance de visualización.
+
+          * `GLOBAL` - GLOBAL
+          * `PROPIAS` - PROPIAS
+          * `ASIGNADAS` - ASIGNADAS
+          * `IMPORTANTES` - IMPORTANTES
+      - in: query
+        name: search
+        schema:
+          type: string
+          minLength: 1
+      - in: query
+        name: sector
+        schema:
+          type: integer
+      - in: query
+        name: sla_status
+        schema:
+          enum:
+          - overdue
+          - pending
+          - on_time
+          - resolved
+          type: string
+          minLength: 1
+        description: |-
+          Filtro de SLA: vencidas (overdue), pendientes (pending), a tiempo (on_time), resueltas (resolved).
+
+          * `overdue` - overdue
+          * `pending` - pending
+          * `on_time` - on_time
+          * `resolved` - resolved
+      - in: query
+        name: status
+        schema:
+          type: string
+          minLength: 1
+        description: Uno o varios estados separados por coma.
+      - in: query
+        name: unit
+        schema:
+          type: integer
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedIncidentListList'
+          description: ''
+    post:
+      operationId: incidents_create
+      description: Registra una incidencia en el condominio activo con estado REPORTED
+        (Reportada). Acepta multipart/form-data con evidencias repetidas en el campo
+        `evidences` (jpg, jpeg, png, webp o pdf). El servidor fija condominio, reportante,
+        código, estado y prioridad inicial; la operación es atómica.
+      summary: Registrar incidencia
+      tags:
+      - Incidencias - Registro
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/IncidentCreateRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+          description: ''
+  /incidents/{public_code}/:
+    get:
+      operationId: incidents_retrieve
+      description: 'Paso 16-41: Obtener detalle completo de la incidencia (DetalleIncidenciaDTO).'
+      summary: Consultar detalle, seguimiento e historial completo (Paso 16-41)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetail'
+          description: ''
+  /incidents/{public_code}/assign/:
+    post:
+      operationId: incidents_assign_create
+      description: Un router conserva el registro, los catálogos y el seguimiento.
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - incidents
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AssignmentRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AssignmentRequestRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignmentRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetail'
+          description: ''
+  /incidents/{public_code}/attachments/:
+    get:
+      operationId: incidents_attachments_retrieve
+      description: Listar o registrar evidencias adjuntas de la incidencia.
+      summary: Consultar o agregar evidencias/adjuntos de la incidencia (Paso 29-30)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentList'
+          description: ''
+    post:
+      operationId: incidents_attachments_create
+      description: Listar o registrar evidencias adjuntas de la incidencia.
+      summary: Consultar o agregar evidencias/adjuntos de la incidencia (Paso 29-30)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateAttachmentRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CreateAttachmentRequestRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAttachmentRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAttachmentRequest'
+          description: ''
+  /incidents/{public_code}/attachments/{attachment_id}/download/:
+    get:
+      operationId: incidents_attachments_download_retrieve
+      description: Un router conserva el registro, los catálogos y el seguimiento.
+      parameters:
+      - in: path
+        name: attachment_id
+        schema:
+          type: string
+          pattern: ^\d+$
+        required: true
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - incidents
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          description: ''
+  /incidents/{public_code}/change-status/:
+    post:
+      operationId: incidents_change_status_create
+      description: 'T034: Cambia el estado de una incidencia y registra el cambio
+        en el historial.'
+      summary: Cambiar estado de incidencia con registro de historial (T034)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChangeStatusRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChangeStatusRequestRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeStatusRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetail'
+          description: ''
+  /incidents/{public_code}/comments/:
+    get:
+      operationId: incidents_comments_retrieve
+      description: 'T037: Listar o crear comentarios públicos e internos.'
+      summary: Consultar o agregar comentarios públicos e internos (T037 / Pasos 27-28
+        y 42-49)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentList'
+          description: ''
+    post:
+      operationId: incidents_comments_create
+      description: 'T037: Listar o crear comentarios públicos e internos.'
+      summary: Consultar o agregar comentarios públicos e internos (T037 / Pasos 27-28
+        y 42-49)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequestRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCommentRequest'
+          description: ''
+  /incidents/{public_code}/history/:
+    get:
+      operationId: incidents_history_list
+      description: 'T034: Consulta el historial de estados de la incidencia.'
+      summary: Historial completo de estados de la incidencia (T034 / Paso 23-24)
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: Un número de página dentro del conjunto de resultados paginado.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Número de resultados a devolver por página.
+        schema:
+          type: integer
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedIncidentStatusHistoryList'
+          description: ''
+  /incidents/{public_code}/set-target-date/:
+    post:
+      operationId: incidents_set_target_date_create
+      description: 'T038: Define o actualiza la fecha objetivo (due_at) o minutos
+        objetivo.'
+      summary: Establecer o reprogramar fecha objetivo (due_at) y SLA (T038)
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SetTargetDateRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SetTargetDateRequestRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetTargetDateRequestRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentDetail'
+          description: ''
+  /incidents/{public_code}/transitions/:
+    get:
+      operationId: incidents_transitions_list
+      description: Un router conserva el registro, los catálogos y el seguimiento.
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: Un número de página dentro del conjunto de resultados paginado.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Número de resultados a devolver por página.
+        schema:
+          type: integer
+      - in: path
+        name: public_code
+        schema:
+          type: string
+          pattern: ^[^/]+$
+        required: true
+      tags:
+      - incidents
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTransitionOptionList'
+          description: ''
+  /incidents/alerts/:
+    get:
+      operationId: incidents_alerts_list
+      description: Un router conserva el registro, los catálogos y el seguimiento.
+      tags:
+      - incidents
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AttentionAlert'
+          description: ''
+  /incidents/assignees/:
+    get:
+      operationId: incidents_assignees_list
+      description: Un router conserva el registro, los catálogos y el seguimiento.
+      tags:
+      - incidents
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AssigneeOption'
+          description: ''
+  /incidents/board-summary/:
+    get:
+      operationId: incidents_board_summary_retrieve
+      description: 'T038 / Paso 12: Métricas globales o filtradas para el tablero
+        de incidencias.'
+      summary: Métricas del tablero (pendientes, vencidas, a tiempo, etc. - T038 /
+        Paso 12)
+      tags:
+      - Incidencias - CU19 Seguimiento e Historial
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentList'
+          description: ''
+  /incidents/categories/:
+    get:
+      operationId: incidents_categories_list
+      description: Categorías activas con la prioridad inicial que el servidor asigna
+        a cada una.
+      summary: Catálogo de categorías de incidencia
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: Un número de página dentro del conjunto de resultados paginado.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Número de resultados a devolver por página.
+        schema:
+          type: integer
+      tags:
+      - Incidencias - Registro
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedIncidentCategoryList'
+          description: ''
+  /incidents/options/:
+    get:
+      operationId: incidents_options_retrieve
+      description: Catálogos, ubicaciones (sectores), unidades y activos que el usuario
+        actual puede vincular en el condominio activo, junto con las reglas de evidencias.
+      summary: Opciones del formulario de registro de incidencia
+      tags:
+      - Incidencias - Registro
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /incidents/priorities/:
+    get:
+      operationId: incidents_priorities_list
+      description: Un router conserva el registro, los catálogos y el seguimiento.
+      summary: Catálogo de niveles de prioridad
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: Un número de página dentro del conjunto de resultados paginado.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Número de resultados a devolver por página.
+        schema:
+          type: integer
+      tags:
+      - Incidencias - Registro
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPriorityLevelList'
+          description: ''
+components:
+  schemas:
+    AssigneeOption:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+      required:
+      - id
+      - name
+    AssignmentRequestRequest:
+      type: object
+      properties:
+        staff_id:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+          maxLength: 240
+      required:
+      - staff_id
+    AttentionAlert:
+      type: object
+      properties:
+        kind:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        due_at:
+          type: string
+          format: date-time
+        resource_id:
+          type: integer
+      required:
+      - code
+      - due_at
+      - kind
+      - resource_id
+      - title
+    AuthorUserSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        full_name:
+          type: string
+          readOnly: true
+          default: ''
+        role_name:
+          type: string
+          readOnly: true
+          default: ''
+        role_slug:
+          type: string
+          readOnly: true
+          default: ''
+      required:
+      - email
+      - full_name
+      - id
+      - role_name
+      - role_slug
+    BlankEnum:
+      enum:
+      - ''
+    CategorySummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        code:
+          type: string
+          maxLength: 50
+        name:
+          type: string
+          maxLength: 100
+        default_staff_type:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/DefaultStaffTypeEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+          - $ref: '#/components/schemas/NullEnum'
+      required:
+      - code
+      - id
+      - name
+    ChangeStatusRequestRequest:
+      type: object
+      description: 'T034: Solicitud de cambio de estado con comentario obligatorio
+        u opcional.'
+      properties:
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        comment:
+          type: string
+          default: ''
+          maxLength: 300
+      required:
+      - status
+    CreateAttachmentRequest:
+      type: object
+      description: Solicitud de registro de adjunto / evidencia fotográfica o documental.
+      properties:
+        file_path:
+          type: string
+          maxLength: 500
+        file_type:
+          allOf:
+          - $ref: '#/components/schemas/FileTypeEnum'
+          default: IMAGE
+        caption:
+          type: string
+          default: ''
+          maxLength: 200
+      required:
+      - file_path
+    CreateAttachmentRequestRequest:
+      type: object
+      description: Solicitud de registro de adjunto / evidencia fotográfica o documental.
+      properties:
+        file_path:
+          type: string
+          minLength: 1
+          maxLength: 500
+        file_type:
+          allOf:
+          - $ref: '#/components/schemas/FileTypeEnum'
+          default: IMAGE
+        caption:
+          type: string
+          default: ''
+          maxLength: 200
+      required:
+      - file_path
+    CreateCommentRequest:
+      type: object
+      description: 'T037: Solicitud de creación de comentario público o interno.'
+      properties:
+        body:
+          type: string
+        visibility:
+          allOf:
+          - $ref: '#/components/schemas/VisibilityEnum'
+          default: PUBLIC
+      required:
+      - body
+    CreateCommentRequestRequest:
+      type: object
+      description: 'T037: Solicitud de creación de comentario público o interno.'
+      properties:
+        body:
+          type: string
+          minLength: 1
+        visibility:
+          allOf:
+          - $ref: '#/components/schemas/VisibilityEnum'
+          default: PUBLIC
+      required:
+      - body
+    DefaultStaffTypeEnum:
+      enum:
+      - ADMINISTRATION
+      - SECURITY
+      - MAINTENANCE
+      - CLEANING
+      - OTHER
+      type: string
+      description: |-
+        * `ADMINISTRATION` - Administración
+        * `SECURITY` - Seguridad
+        * `MAINTENANCE` - Mantenimiento
+        * `CLEANING` - Limpieza
+        * `OTHER` - Otro
+    FileTypeEnum:
+      enum:
+      - IMAGE
+      - VIDEO
+      - DOCUMENT
+      type: string
+      description: |-
+        * `IMAGE` - Imagen
+        * `VIDEO` - Video
+        * `DOCUMENT` - Documento
+    Incident:
+      type: object
+      description: Representación de la incidencia recién registrada (respuesta de
+        confirmación).
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        public_code:
+          type: string
+          maxLength: 30
+        condominium:
+          type: integer
+          nullable: true
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        status_display:
+          type: string
+          readOnly: true
+        title:
+          type: string
+          maxLength: 160
+        description:
+          type: string
+        category:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        priority:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        sector:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        unit:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        asset:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        reporter:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        evidences:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentEvidence'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - asset
+      - category
+      - description
+      - evidences
+      - id
+      - priority
+      - public_code
+      - reporter
+      - sector
+      - status_display
+      - unit
+      - updated_at
+    IncidentAssignment:
+      type: object
+      description: Serializador de asignaciones históricas y vigentes de la incidencia.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        assigned_to:
+          allOf:
+          - $ref: '#/components/schemas/StaffSummary'
+          readOnly: true
+        assigned_by:
+          allOf:
+          - $ref: '#/components/schemas/AuthorUserSummary'
+          readOnly: true
+        assigned_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        reason:
+          type: string
+          maxLength: 240
+        is_active:
+          type: boolean
+          readOnly: true
+      required:
+      - assigned_by
+      - assigned_to
+      - id
+      - is_active
+    IncidentAttachment:
+      type: object
+      description: Serializador de evidencias y adjuntos de incidencia.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        file_path:
+          type: string
+          maxLength: 500
+        file_url:
+          type: string
+          nullable: true
+          readOnly: true
+        file_type:
+          $ref: '#/components/schemas/FileTypeEnum'
+        file_type_display:
+          type: string
+          readOnly: true
+        caption:
+          type: string
+          maxLength: 200
+        created_at:
+          type: string
+          format: date-time
+        uploaded_by:
+          allOf:
+          - $ref: '#/components/schemas/AuthorUserSummary'
+          readOnly: true
+      required:
+      - file_path
+      - file_type_display
+      - file_url
+      - id
+      - uploaded_by
+    IncidentCategory:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        code:
+          type: string
+          maxLength: 50
+        name:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 240
+        default_priority:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+      required:
+      - code
+      - default_priority
+      - id
+      - name
+    IncidentComment:
+      type: object
+      description: 'T037: Serializador de comentarios públicos e internos.'
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        body:
+          type: string
+        visibility:
+          $ref: '#/components/schemas/VisibilityEnum'
+        visibility_display:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+        author:
+          allOf:
+          - $ref: '#/components/schemas/AuthorUserSummary'
+          readOnly: true
+      required:
+      - author
+      - body
+      - id
+      - visibility_display
+    IncidentCreateRequest:
+      type: object
+      description: |-
+        Entrada de CU18 / T032-T033. Solo acepta datos que el usuario puede decidir.
+        Condominio, reportante, código, estado, prioridad y fechas los fija el servidor;
+        cualquier valor enviado para ellos se ignora.
+        Contexto requerido: `condominium`, `request`, `full_unit_scope`.
+      properties:
+        title:
+          type: string
+          default: ''
+          maxLength: 160
+        description:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        category:
+          type: integer
+        sector:
+          type: integer
+        unit:
+          type: integer
+          nullable: true
+        asset:
+          type: integer
+          nullable: true
+        evidences:
+          type: array
+          items:
+            type: string
+            format: binary
+          writeOnly: true
+      required:
+      - category
+      - description
+      - sector
+    IncidentDetail:
+      type: object
+      description: 'DetalleIncidenciaDTO: Composición completa para seguimiento (Paso
+        40 del diagrama).'
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        public_code:
+          type: string
+          maxLength: 30
+        title:
+          type: string
+          maxLength: 160
+        description:
+          type: string
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        status_display:
+          type: string
+          readOnly: true
+        category:
+          allOf:
+          - $ref: '#/components/schemas/CategorySummary'
+          readOnly: true
+        priority:
+          allOf:
+          - $ref: '#/components/schemas/PrioritySummary'
+          readOnly: true
+        sector:
+          allOf:
+          - $ref: '#/components/schemas/SectorSummary'
+          readOnly: true
+        unit:
+          allOf:
+          - $ref: '#/components/schemas/UnitSummary'
+          readOnly: true
+        current_assignee:
+          allOf:
+          - $ref: '#/components/schemas/StaffSummary'
+          readOnly: true
+        reporter_user:
+          allOf:
+          - $ref: '#/components/schemas/AuthorUserSummary'
+          readOnly: true
+        reporter_resident:
+          allOf:
+          - $ref: '#/components/schemas/ResidentSummary'
+          readOnly: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        is_pending:
+          type: boolean
+          readOnly: true
+        is_overdue:
+          type: boolean
+          readOnly: true
+        time_remaining_minutes:
+          type: integer
+          readOnly: true
+        overdue_by_minutes:
+          type: integer
+          readOnly: true
+        target_minutes:
+          type: integer
+          nullable: true
+          readOnly: true
+        latest_status_change:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+        status_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentStatusHistory'
+          readOnly: true
+        assignments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentAssignment'
+          readOnly: true
+        public_comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentComment'
+          readOnly: true
+        internal_comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentComment'
+          readOnly: true
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentAttachment'
+          readOnly: true
+        can_view_internal_comments:
+          type: boolean
+          readOnly: true
+        can_change_status:
+          type: boolean
+          readOnly: true
+        can_modify_target_date:
+          type: boolean
+          readOnly: true
+        can_post_internal_comments:
+          type: boolean
+          readOnly: true
+      required:
+      - assignments
+      - attachments
+      - can_change_status
+      - can_modify_target_date
+      - can_post_internal_comments
+      - can_view_internal_comments
+      - category
+      - current_assignee
+      - description
+      - id
+      - internal_comments
+      - is_overdue
+      - is_pending
+      - latest_status_change
+      - overdue_by_minutes
+      - priority
+      - public_code
+      - public_comments
+      - reporter_resident
+      - reporter_user
+      - sector
+      - status_display
+      - status_history
+      - target_minutes
+      - time_remaining_minutes
+      - unit
+      - updated_at
+    IncidentEvidence:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        file_type:
+          $ref: '#/components/schemas/FileTypeEnum'
+        file_name:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - file_name
+      - id
+    IncidentList:
+      type: object
+      description: DTO para listado del Tablero de Incidencias (Paso 13 del diagrama).
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        public_code:
+          type: string
+          maxLength: 30
+        title:
+          type: string
+          maxLength: 160
+        description:
+          type: string
+        status:
+          $ref: '#/components/schemas/StatusEnum'
+        status_display:
+          type: string
+          readOnly: true
+        category:
+          allOf:
+          - $ref: '#/components/schemas/CategorySummary'
+          readOnly: true
+        priority:
+          allOf:
+          - $ref: '#/components/schemas/PrioritySummary'
+          readOnly: true
+        sector:
+          allOf:
+          - $ref: '#/components/schemas/SectorSummary'
+          readOnly: true
+        unit:
+          allOf:
+          - $ref: '#/components/schemas/UnitSummary'
+          readOnly: true
+        current_assignee:
+          allOf:
+          - $ref: '#/components/schemas/StaffSummary'
+          readOnly: true
+        reporter_user:
+          allOf:
+          - $ref: '#/components/schemas/AuthorUserSummary'
+          readOnly: true
+        reporter_resident:
+          allOf:
+          - $ref: '#/components/schemas/ResidentSummary'
+          readOnly: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        is_pending:
+          type: boolean
+          readOnly: true
+        is_overdue:
+          type: boolean
+          readOnly: true
+        time_remaining_minutes:
+          type: integer
+          readOnly: true
+        overdue_by_minutes:
+          type: integer
+          readOnly: true
+        target_minutes:
+          type: integer
+          nullable: true
+          readOnly: true
+        latest_status_change:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          readOnly: true
+      required:
+      - category
+      - current_assignee
+      - description
+      - id
+      - is_overdue
+      - is_pending
+      - latest_status_change
+      - overdue_by_minutes
+      - priority
+      - public_code
+      - reporter_resident
+      - reporter_user
+      - sector
+      - status_display
+      - target_minutes
+      - time_remaining_minutes
+      - unit
+      - updated_at
+    IncidentStatusHistory:
+      type: object
+      description: 'T034: Serializador de historial de cambios de estado.'
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        from_status:
+          type: string
+          nullable: true
+          maxLength: 20
+        from_status_display:
+          type: string
+          readOnly: true
+        to_status:
+          $ref: '#/components/schemas/ToStatusEnum'
+        to_status_display:
+          type: string
+          readOnly: true
+        comment:
+          type: string
+          maxLength: 300
+        changed_at:
+          type: string
+          format: date-time
+        changed_by:
+          allOf:
+          - $ref: '#/components/schemas/AuthorUserSummary'
+          readOnly: true
+      required:
+      - changed_by
+      - from_status_display
+      - id
+      - to_status
+      - to_status_display
+    NullEnum:
+      enum:
+      - null
+    PaginatedIncidentCategoryList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentCategory'
+    PaginatedIncidentListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentList'
+    PaginatedIncidentStatusHistoryList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentStatusHistory'
+    PaginatedPriorityLevelList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriorityLevel'
+    PaginatedTransitionOptionList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransitionOption'
+    PriorityLevel:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        code:
+          type: string
+          maxLength: 20
+        name:
+          type: string
+          maxLength: 40
+        rank:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+        target_minutes:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+          nullable: true
+      required:
+      - code
+      - id
+      - name
+      - rank
+    PrioritySummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        code:
+          type: string
+          maxLength: 20
+        name:
+          type: string
+          maxLength: 40
+        rank:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+        target_minutes:
+          type: integer
+          maximum: 9223372036854775807
+          minimum: -9223372036854775808
+          format: int64
+          nullable: true
+      required:
+      - code
+      - id
+      - name
+      - rank
+    ResidentSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        full_name:
+          type: string
+          readOnly: true
+        document_number:
+          type: string
+          readOnly: true
+        phone:
+          type: string
+          readOnly: true
+        email:
+          type: string
+          readOnly: true
+      required:
+      - document_number
+      - email
+      - full_name
+      - id
+      - phone
+    SectorSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        code:
+          type: string
+          maxLength: 40
+        name:
+          type: string
+          maxLength: 100
+        sector_type:
+          $ref: '#/components/schemas/SectorTypeEnum'
+        sector_type_display:
+          type: string
+          readOnly: true
+      required:
+      - code
+      - id
+      - name
+      - sector_type_display
+    SectorTypeEnum:
+      enum:
+      - SECTOR
+      - BLOCK
+      - TOWER
+      - FLOOR
+      - ZONE
+      - OTHER
+      type: string
+      description: |-
+        * `SECTOR` - Sector
+        * `BLOCK` - Bloque
+        * `TOWER` - Torre
+        * `FLOOR` - Piso
+        * `ZONE` - Zona
+        * `OTHER` - Otro
+    SetTargetDateRequestRequest:
+      type: object
+      description: 'T038: Solicitud de actualización de fecha objetivo de resolución.'
+      properties:
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        target_minutes:
+          type: integer
+          minimum: 1
+    StaffSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        employee_code:
+          type: string
+          nullable: true
+          maxLength: 40
+        full_name:
+          type: string
+          readOnly: true
+        staff_type:
+          $ref: '#/components/schemas/StaffTypeEnum'
+        staff_type_display:
+          type: string
+          readOnly: true
+      required:
+      - full_name
+      - id
+      - staff_type
+      - staff_type_display
+    StaffTypeEnum:
+      enum:
+      - ADMINISTRATION
+      - SECURITY
+      - MAINTENANCE
+      - CLEANING
+      - OTHER
+      type: string
+      description: |-
+        * `ADMINISTRATION` - Administración
+        * `SECURITY` - Seguridad
+        * `MAINTENANCE` - Mantenimiento
+        * `CLEANING` - Limpieza
+        * `OTHER` - Otro
+    StatusEnum:
+      enum:
+      - REPORTED
+      - REVIEWED
+      - ASSIGNED
+      - IN_PROGRESS
+      - RESOLVED
+      - CLOSED
+      - CANCELLED
+      type: string
+      description: |-
+        * `REPORTED` - Reportada
+        * `REVIEWED` - Revisada
+        * `ASSIGNED` - Asignada
+        * `IN_PROGRESS` - En progreso
+        * `RESOLVED` - Resuelta
+        * `CLOSED` - Cerrada
+        * `CANCELLED` - Cancelada
+    ToStatusEnum:
+      enum:
+      - REPORTED
+      - REVIEWED
+      - ASSIGNED
+      - IN_PROGRESS
+      - RESOLVED
+      - CLOSED
+      - CANCELLED
+      type: string
+      description: |-
+        * `REPORTED` - Reportada
+        * `REVIEWED` - Revisada
+        * `ASSIGNED` - Asignada
+        * `IN_PROGRESS` - En progreso
+        * `RESOLVED` - Resuelta
+        * `CLOSED` - Cerrada
+        * `CANCELLED` - Cancelada
+    TransitionOption:
+      type: object
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+      required:
+      - label
+      - value
+    UnitSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        code:
+          type: string
+          maxLength: 40
+        unit_type:
+          $ref: '#/components/schemas/UnitTypeEnum'
+        unit_type_display:
+          type: string
+          readOnly: true
+        floor_label:
+          type: string
+          maxLength: 20
+        sector_name:
+          type: string
+          readOnly: true
+          default: ''
+      required:
+      - code
+      - id
+      - sector_name
+      - unit_type_display
+    UnitTypeEnum:
+      enum:
+      - HOUSE
+      - APARTMENT
+      - OFFICE
+      - STORE
+      - OTHER
+      type: string
+      description: |-
+        * `HOUSE` - Casa
+        * `APARTMENT` - Departamento
+        * `OFFICE` - Oficina
+        * `STORE` - Local
+        * `OTHER` - Otro
+    VisibilityEnum:
+      enum:
+      - PUBLIC
+      - INTERNAL
+      type: string
+      description: |-
+        * `PUBLIC` - Público
+        * `INTERNAL` - Interno
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer JWT para móvil; la web usa cookies HttpOnly equivalentes.
+tags:
+- name: Autenticación
+  description: 'CU01: Registro y ciclo de sesión.'
+- name: Roles y Permisos
+  description: 'CU02: Gestión de roles, permisos RBAC y aprobación de residentes.'
+- name: Residentes
+  description: 'CU05: CRUD de residentes y copropietarios.'
+- name: Personal
+  description: 'CU07: CRUD y clasificación del personal del condominio.'
+- name: Seguridad - Visitas
+  description: 'CU08: Registro y autorización anticipada de visitantes.'
+- name: Seguridad - QR de visita
+  description: 'CU09: Generación y consulta del QR temporal de una visita.'
+- name: Seguridad - Validación QR
+  description: 'CU10: Validación del QR y autorización de ingreso del visitante.'
+- name: Sistema
+  description: Salud y metadatos del servicio.

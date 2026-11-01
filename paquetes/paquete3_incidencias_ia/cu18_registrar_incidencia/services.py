@@ -16,7 +16,7 @@ from rest_framework import status
 from rest_framework.exceptions import APIException
 
 from condominiums.models import Condominium, Resident, Sector, Unit
-from incidents.models import Incident, IncidentAttachment, PriorityLevel
+from incidents.models import Incident, IncidentAttachment, IncidentStatusHistory, PriorityLevel
 from maintenance.models import Asset
 
 logger = logging.getLogger("taji.incidents")
@@ -305,6 +305,10 @@ def create_incident(*, condominium, reporter, reporter_resident, validated_data,
     try:
         with transaction.atomic():
             incident = _insert_with_unique_code(condominium, fields)
+            IncidentStatusHistory.objects.create(
+                incident=incident, changed_by_user=reporter, to_status=Incident.Status.REPORTED,
+                comment="Incidencia registrada", changed_at=incident.created_at,
+            )
             for evidence in evidences:
                 target = f"incidents/{condominium.pk}/{incident.pk}/{uuid.uuid4().hex[:12]}-{evidence.safe_name}"
                 evidence.upload.seek(0)

@@ -62,7 +62,7 @@ def can_change_incident_status(user, incident, new_status) -> bool:
     person = getattr(user, "person", None)
 
     # Personal responsable asignado
-    if person and incident.current_assignee_staff and incident.current_assignee_staff.person_id == person.id:
+    if person and incident.current_assignee_staff and incident.current_assignee_staff.person_id == person.id and incident.current_assignee_staff.status == Staff.Status.ACTIVE:
         if new_status in (Incident.Status.IN_PROGRESS, Incident.Status.RESOLVED):
             return True
 
