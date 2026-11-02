@@ -22,6 +22,7 @@ from django.utils import timezone
 from security.models import VisitAuthorization
 from security.qr import (
     VisitQrError,
+    _lock_authorization,
     _resolve_ttl,
     build_payload,
     generate_token,
@@ -222,9 +223,10 @@ class Command(BaseCommand):
                 token = generate_token()
                 new_expiry = min(now + timedelta(minutes=ttl), authorization.valid_until)
 
-                locked = (
-                    VisitAuthorization.objects.select_for_update().get(pk=authorization.pk)
-                )
+                # Se usa el mismo helper que la vista, no un `select_for_update()`
+                # propio: el diagnostico solo es util si reproduce exactamente la
+                # sentencia que falla en el servidor.
+                locked = _lock_authorization(authorization.pk)
                 locked.qr_token_hash = hash_token(token)
                 locked.qr_issued_at = now
                 locked.qr_expires_at = new_expiry

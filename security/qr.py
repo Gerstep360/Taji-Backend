@@ -235,6 +235,44 @@ def _authorization_queryset():
 # ---------------------------------------------------------------------------
 
 
+def _lock_authorization(pk: int) -> VisitAuthorization:
+    """
+    Relee una autorización con `FOR UPDATE` para modificarla sin condición de carrera.
+
+    **Por qué `of=("self",)` es obligatorio aquí y no opcional.**
+
+    `VisitAuthorization` no tiene campo `condominium`, así que el aislamiento de
+    tenant cae en la rama de `unit` de `TenantAwareQuerySet.filter_by_current_tenant`:
+
+        .filter(Q(unit__sector__condominium_id=tenant) | Q(unit__sector__isnull=True))
+
+    Ese `OR ... IS NULL` convierte el JOIN a `sector` en un **LEFT OUTER JOIN**, y
+    PostgreSQL rechaza de plano `FOR UPDATE` sobre el lado nullable de un outer
+    join:
+
+        psycopg.errors.FeatureNotSupported:
+        FOR UPDATE cannot be applied to the nullable side of an outer join
+
+    Como `NotSupportedError` es subclase de `DatabaseError`, la API lo traducía a
+    un 503 "La base de datos no está disponible", que señalaba un problema de
+    servidor inexistente: la base estaba perfectamente sana.
+
+    El fallo solo se daba con **contexto de tenant activo**, es decir por HTTP. Por
+    consola (y en toda la suite de pruebas, que corre en SQLite) el filtro no se
+    aplica, no hay outer join y `FOR UPDATE` funciona sin más. De ahí que un
+    diagnóstico manual concluyera que la escritura estaba bien.
+
+    `of=("self",)` genera `FOR UPDATE OF "visit_authorization"`: bloquea solo la
+    tabla que se modifica y PostgreSQL lo acepta aunque la consulta-arrastre joins.
+    No se pierde ninguna garantía: la fila bloqueada sigue siendo la de
+    `visit_authorization` y el `WHERE` de tenant sigue aplicando.
+
+    Debe usarse este helper en lugar de un `select_for_update()` directo sobre
+    `VisitAuthorization`.
+    """
+    return VisitAuthorization.objects.select_for_update(of=("self",)).get(pk=pk)
+
+
 def _resolve_ttl(authorization: VisitAuthorization, ttl_minutes: int | None, now: datetime) -> int:
     """Determina la vigencia efectiva del QR sin exceder `valid_until`."""
     default_ttl = int(getattr(settings, "VISIT_QR_TTL_MINUTES", 240))
@@ -300,7 +338,7 @@ def issue_visit_qr(
     new_expiry = min(now + timedelta(minutes=ttl), authorization.valid_until)
 
     with transaction.atomic():
-        locked = VisitAuthorization.objects.select_for_update().get(pk=authorization.pk)
+        locked = _lock_authorization(authorization.pk)
         locked.qr_token_hash = hash_token(new_token)
         locked.qr_issued_at = now
         locked.qr_expires_at = new_expiry
@@ -505,7 +543,7 @@ def register_access_event(
     now = at or timezone.now()
 
     with transaction.atomic():
-        locked = VisitAuthorization.objects.select_for_update().get(pk=authorization.pk)
+        locked = _lock_authorization(authorization.pk)
 
         event = AccessEvent.objects.create(
             authorization=locked,
