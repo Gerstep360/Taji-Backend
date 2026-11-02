@@ -71,6 +71,21 @@ class PreMigrationBackupTests(SimpleTestCase):
     def setUp(self):
         self.source = VPS_SH.read_text(encoding="utf-8")
 
+    def test_first_install_can_backup_without_an_existing_current_release(self):
+        body = _function_body(self.source, "run_backup_cli")
+        self.assertIn("${TAJI_BACKUP_RELEASE:-$ROOT/current}", body)
+        self.assertIn('cd "$backup_release"', body)
+        self.assertIn('"$backup_release/.venv/bin/python"', body)
+        self.assertIn('TAJI_BACKUP_RELEASE="$RELEASE" run_backup_cli create --prefix premigrate', self.source)
+
+    def test_failed_backup_prints_diagnostics_and_aborts_before_migrations(self):
+        marker = self.source.index('if ! animated_progress_bar "$backup_pid"')
+        migrate = self.source.index("manage migrate --noinput", marker)
+        block = self.source[marker:migrate]
+        self.assertIn("cat /tmp/taji-premigrate-backup.log", block)
+        self.assertIn('fail "No se pudo respaldar', block)
+        self.assertIn('wait "$pid" || exit_code=$?', _function_body(self.source, "animated_progress_bar"))
+
     def test_the_pre_migration_backup_goes_through_run_backup_cli(self):
         """
         `run_backup_cli` es la unica via soportada: hace `cd` a /opt/taji/current
