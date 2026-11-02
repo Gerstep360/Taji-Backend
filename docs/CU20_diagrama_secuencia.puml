@@ -1,0 +1,173 @@
+@startuml
+skinparam style strictuml
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 11
+
+' Configuración para forzar flechas síncronas y estilos estrictos UML 2.5 / 2.5.1
+skinparam sequence {
+    ArrowColor #000000
+    LifeLineBorderColor #666666
+    LifeLineBackgroundColor #FFFFFF
+    GroupBorderColor #333333
+    GroupBackgroundColor #FAFAFA
+    ParticipantBorderColor #334155
+    ParticipantBackgroundColor #FFFFFF
+}
+
+' Declaración de Participantes (Actor -> Interfaz -> Control -> Entidades)
+participant ":Administrador" as Actor <<Actor>>
+participant ":InterfazAsignacionIncidencia\n(Web)" as Vista <<Interfaz>>
+participant ":ControladorIncidencia" as Controlador <<Control>>
+participant ":ServicioIncidencia" as Servicio <<Control>>
+participant ":Incidencia" as Incidencia <<Entidad>>
+participant ":AsignacionIncidencia" as Asignacion <<Entidad>>
+participant ":HistorialEstado" as Historial <<Entidad>>
+participant ":Personal" as Personal <<Entidad>>
+participant ":Usuario/Rol" as Usuario <<Entidad>>
+
+group sd CU20 Asignar y reasignar incidencia
+
+    ' ================================================================== '
+    ' 1. Apertura del detalle y contexto de asignación                   '
+    ' ================================================================== '
+    Actor -[#black]> Vista : 1 : AbrirDetalleIncidencia(publicCode)
+    activate Vista
+
+    Vista -[#black]> Controlador : 2 : ObtenerContextoAsignacion(publicCode, JWT)
+    activate Controlador
+
+    Controlador -[#black]> Usuario : 3 : ValidarPermisoYAlcance(manage_incidents)
+    activate Usuario
+    Usuario --> Controlador : 4 : Autorizado, condominioId, usuarioId
+    deactivate Usuario
+
+    Controlador -[#black]> Servicio : 5 : ObtenerContextoAsignacion(publicCode, condominioId)
+    activate Servicio
+
+    Servicio -[#black]> Incidencia : 6 : BuscarPorCodigo(publicCode, condominioId)
+    activate Incidencia
+    Incidencia --> Servicio : 7 : Incidencia (estado, prioridad, current_assignee_staff, categoría)
+    deactivate Incidencia
+
+    Servicio -[#black]> Asignacion : 8 : ObtenerAsignacionVigente(incidentId)
+    activate Asignacion
+    Asignacion --> Servicio : 9 : Asignación vigente o ninguna
+    deactivate Asignacion
+
+    Servicio -[#black]> Personal : 10 : ListarPersonalAsignable(condominioId)
+    activate Personal
+    Personal --> Servicio : 11 : Personal activo (id, nombre, área, código)
+    deactivate Personal
+
+    Servicio -[#black]> Servicio : 12 : ComponerContextoAsignacion(incidencia, asignación, personal)
+    Servicio --> Controlador : 13 : ContextoAsignacionDTO
+    deactivate Servicio
+
+    Controlador --> Vista : 14 : 200 OK ContextoAsignacionDTO
+    deactivate Controlador
+
+    Vista --> Actor : 15 : MostrarResponsableActualYPersonalDisponible()
+
+    Actor -[#black]> Vista : 16 : SeleccionarNuevoResponsable(staffId, motivo?)
+
+    alt La incidencia no tiene responsable actual
+        Vista -[#black]> Controlador : 17 : AsignarIncidencia(publicCode, staffId, motivo?)
+        activate Controlador
+
+        Controlador -[#black]> Usuario : 18 : ValidarPermiso(manage_incidents)
+        activate Usuario
+        Usuario --> Controlador : 19 : Autorizado
+        deactivate Usuario
+
+        Controlador -[#black]> Servicio : 20 : AsignarIncidencia(publicCode, staffId, motivo, assignedByUserId, condominioId)
+        activate Servicio
+
+        Servicio -[#black]> Incidencia : 21 : BuscarYBloquearParaAsignacion(publicCode, condominioId)
+        activate Incidencia
+        Incidencia --> Servicio : 22 : Incidencia abierta (REPORTED / REVIEWED)
+        deactivate Incidencia
+
+        Servicio -[#black]> Personal : 23 : ValidarPersonalAsignable(staffId, condominioId)
+        activate Personal
+        Personal --> Servicio : 24 : Personal activo, del condominio y asignable
+        deactivate Personal
+
+        Servicio -[#black]> Asignacion : 25 : CrearAsignacion(incidentId, staffId, assignedByUserId, motivo)
+        activate Asignacion
+        Asignacion --> Servicio : 26 : Asignación registrada (assigned_at)
+        deactivate Asignacion
+
+        Servicio -[#black]> Incidencia : 27 : ActualizarResponsableYEstado(staffId, ASSIGNED)
+        activate Incidencia
+        Incidencia --> Servicio : 28 : Responsable y estado actualizados
+        deactivate Incidencia
+
+        Servicio -[#black]> Historial : 29 : RegistrarCambioEstado(REPORTED/REVIEWED -> ASSIGNED, userId, motivo)
+        activate Historial
+        Historial --> Servicio : 30 : Cambio de estado registrado
+        deactivate Historial
+
+        Servicio --> Controlador : 31 : AsignacionIncidenciaDTO
+        deactivate Servicio
+
+        Controlador --> Vista : 32 : 201 Created AsignacionIncidenciaDTO
+        deactivate Controlador
+
+    else La incidencia ya tiene responsable actual
+        Vista -[#black]> Controlador : 33 : ReasignarIncidencia(publicCode, staffId, motivo)
+        activate Controlador
+
+        Controlador -[#black]> Usuario : 34 : ValidarPermiso(manage_incidents)
+        activate Usuario
+        Usuario --> Controlador : 35 : Autorizado
+        deactivate Usuario
+
+        Controlador -[#black]> Servicio : 36 : ReasignarIncidencia(publicCode, staffId, motivo, assignedByUserId, condominioId)
+        activate Servicio
+
+        Servicio -[#black]> Incidencia : 37 : BuscarYBloquearParaReasignacion(publicCode, condominioId)
+        activate Incidencia
+        Incidencia --> Servicio : 38 : Incidencia abierta (ASSIGNED / IN_PROGRESS)
+        deactivate Incidencia
+
+        Servicio -[#black]> Personal : 39 : ValidarPersonalAsignable(staffId, condominioId)
+        activate Personal
+        Personal --> Servicio : 40 : Personal activo, del condominio y distinto del actual
+        deactivate Personal
+
+        Servicio -[#black]> Asignacion : 41 : ObtenerAsignacionVigente(incidentId)
+        activate Asignacion
+        Asignacion --> Servicio : 42 : Asignación vigente (assignmentId, staffId)
+        deactivate Asignacion
+
+        Servicio -[#black]> Asignacion : 43 : CerrarAsignacionVigente(assignmentId, now, motivo)
+        activate Asignacion
+        Asignacion --> Servicio : 44 : Asignación cerrada (ended_at, reason)
+        deactivate Asignacion
+
+        Servicio -[#black]> Asignacion : 45 : CrearAsignacion(incidentId, staffId, assignedByUserId, motivo)
+        activate Asignacion
+        Asignacion --> Servicio : 46 : Nueva asignación vigente
+        deactivate Asignacion
+
+        Servicio -[#black]> Incidencia : 47 : ActualizarResponsable(staffId)
+        activate Incidencia
+        Incidencia --> Servicio : 48 : Responsable actualizado
+        deactivate Incidencia
+
+        Servicio --> Controlador : 49 : AsignacionIncidenciaDTO
+        deactivate Servicio
+
+        Controlador --> Vista : 50 : 200 OK AsignacionIncidenciaDTO
+        deactivate Controlador
+    end
+
+    Vista --> Actor : 51 : MostrarResponsableYLineaDeTiempoActualizados()
+    deactivate Vista
+
+end
+
+@enduml

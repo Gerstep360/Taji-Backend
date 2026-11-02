@@ -30,11 +30,13 @@ def api_not_found(_request, _path):
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("health/", health_check, name="health-root"),
     path("api/v1/health/", health_check, name="health"),
     path("api/v1/download/apk/", download_mobile_apk, name="download-apk"),
     path("downloads/taji.apk", download_mobile_apk, name="download-apk-direct"),
     path("api/v1/paquete1/", include("paquetes.paquete1_usuarios_condominio.urls")),
     path("api/v1/paquete2/", include("paquetes.paquete2_seguridad_accesos.urls")),
+    path("api/v1/paquete3/", include("paquetes.paquete3_incidencias_ia.urls")),
     path("api/v1/security/", include("paquetes.paquete2_seguridad_accesos.urls")),
     path("api/v1/auth/", include("accounts.urls")),
     path("api/v1/roles/", include("paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.urls")),
@@ -45,6 +47,8 @@ urlpatterns = [
     path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu08_visitantes.urls")),
     path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu10_validar_qr.urls")),
     path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu09_qr_visita.urls")),
+    path("api/v1/", include("paquetes.paquete3_incidencias_ia.cu19_seguimiento_historial.urls")),
+    path("api/v1/", include("paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.urls")),
     path("api/v1/openapi/", SpectacularAPIView.as_view(), name="openapi-schema"),
     path(
         "api/v1/docs/",
