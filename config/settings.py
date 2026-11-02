@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "tenancy.apps.TenancyConfig",
     "reports",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
+    "paquetes.paquete6_reportes_analitica.cu31_reportes.apps.Cu31ReportesConfig",
 ]
 
 MIDDLEWARE = [
