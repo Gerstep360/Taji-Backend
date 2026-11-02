@@ -16,7 +16,21 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from incidents.models import Incident, IncidentAttachment
+from incidents.models import Incident, IncidentAttachment, IncidentCategory, PriorityLevel
+from auditlog.services import record_audit_event
+from tenancy.context import TenantContext
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia import services as cu18_services
+from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.serializers import (
+    AssetOptionSerializer,
+    IncidentCategorySerializer,
+    IncidentCreateSerializer,
+    IncidentSerializer,
+    PriorityLevelSerializer,
+    SectorOptionSerializer,
+    UnitOptionSerializer,
+)
+from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.permissions import CanReportIncidents
 from .permissions import CanAccessIncidentTracking
 from .serializers import (
     ChangeStatusRequestSerializer,
@@ -49,11 +63,19 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
     """Controlador REST para consulta, seguimiento e historial de incidencias."""
 
     permission_classes = [IsAuthenticated, CanAccessIncidentTracking]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     lookup_field = "public_code"
     lookup_url_kwarg = "public_code"
     lookup_value_regex = r"[^/]+"
 
+    def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticated(), CanReportIncidents()]
+        return [IsAuthenticated(), CanAccessIncidentTracking()]
+
     def get_serializer_class(self):
+        if self.action == "create":
+            return IncidentCreateSerializer
         if self.action == "retrieve":
             return IncidentDetailSerializer
         if self.action == "change_status":
@@ -65,6 +87,90 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
         if self.action == "attachments" and self.request.method == "POST":
             return CreateAttachmentRequestSerializer
         return IncidentListSerializer
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.action == "create":
+            context["condominium"] = TenantContext.get_current_tenant()
+            from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.views import has_full_unit_scope
+            context["full_unit_scope"] = has_full_unit_scope(self.request)
+        return context
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        condominium = serializer.context["condominium"]
+        data = dict(serializer.validated_data)
+        evidences = data.pop("evidences", [])
+        incident = cu18_services.create_incident(
+            condominium=condominium,
+            reporter=request.user,
+            reporter_resident=cu18_services.reporter_resident_for(condominium, request.user),
+            validated_data=data,
+            evidences=evidences,
+        )
+        incident = (
+            Incident.objects.select_related("category", "priority", "sector", "unit", "asset", "reporter_user__person")
+            .prefetch_related("attachments")
+            .get(pk=incident.pk)
+        )
+        try:
+            record_audit_event(
+                action_code="INCIDENT_REPORTED",
+                resource_type="Incident",
+                resource_id=incident.pk,
+                description=f"Incidencia {incident.public_code} registrada.",
+                actor_user=request.user,
+                after_data={
+                    "incident_id": incident.pk,
+                    "public_code": incident.public_code,
+                    "condominium_id": getattr(incident, "condominium_id", None),
+                    "category": incident.category.code if incident.category else None,
+                    "priority": incident.priority.code if incident.priority else None,
+                    "sector_id": incident.sector_id,
+                    "unit_id": incident.unit_id,
+                    "asset_id": incident.asset_id,
+                    "evidences": len(evidences),
+                    "status": incident.status,
+                },
+                request=request,
+            )
+        except Exception:
+            pass
+        return Response(IncidentSerializer(incident).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="options")
+    def options(self, request):
+        condominium = TenantContext.get_current_tenant()
+        from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.views import has_full_unit_scope
+        full_scope = has_full_unit_scope(request)
+        units = cu18_services.selectable_units(condominium, request.user, full_scope)
+        return Response(
+            {
+                "categories": IncidentCategorySerializer(self._categories(), many=True).data,
+                "priorities": PriorityLevelSerializer(self._priorities(), many=True).data,
+                "sectors": SectorOptionSerializer(cu18_services.tenant_sectors(condominium), many=True).data,
+                "units": UnitOptionSerializer(units, many=True).data,
+                "assets": AssetOptionSerializer(cu18_services.tenant_assets(condominium), many=True).data,
+                "evidence_rules": cu18_services.evidence_rules(),
+            }
+        )
+
+    @action(detail=False, methods=["get"], url_path="categories")
+    def categories(self, request):
+        return Response(IncidentCategorySerializer(self._categories(), many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="priorities")
+    def priorities(self, request):
+        return Response(PriorityLevelSerializer(self._priorities(), many=True).data)
+
+    @staticmethod
+    def _categories():
+        return IncidentCategory.objects.filter(is_active=True).order_by("name")
+
+    @staticmethod
+    def _priorities():
+        return PriorityLevel.objects.filter(is_active=True).order_by("rank")
 
     def get_object(self) -> Incident:
         lookup_val = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)

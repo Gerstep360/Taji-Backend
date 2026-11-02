@@ -11,6 +11,7 @@ from django.core.exceptions import SuspiciousFileOperation
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, transaction
 from django.db.models import Max, Q
+from django.utils import timezone
 from django.utils.text import get_valid_filename
 from rest_framework import status
 from rest_framework.exceptions import APIException
@@ -235,43 +236,26 @@ class EvidenceStorageUnavailable(APIException):
 CODE_ATTEMPTS = 5
 
 
-def _next_sequence(condominium_id):
-    current = Incident.objects.filter(condominium_id=condominium_id).aggregate(
-        value=Max("condominium_sequence")
-    )["value"]
-    return (current or 0) + 1
-
-
-def format_public_code(condominium_id, sequence):
-    return f"INC-{condominium_id}-{sequence:06d}"
-
-
 def _insert_with_unique_code(condominium, fields):
     """
-    Correlativo por condominio:
-    1. Bloquea la fila del condominio (SELECT ... FOR UPDATE en PostgreSQL) para
-       serializar los registros concurrentes del mismo tenant.
-    2. Calcula MAX(correlativo) + 1.
-    3. Inserta dentro de un savepoint; la restricción única
-       (condominium, condominium_sequence) y la unicidad de `public_code` son la
-       garantía final. Ante IntegrityError se reintenta con un nuevo número.
+    Inserta la incidencia utilizando un código público único basado en UUID y fecha,
+    evitando depender de columnas de condominio no existentes en la tabla base.
     """
-    list(Condominium.objects.select_for_update().filter(pk=condominium.pk).values_list("pk", flat=True))
     for attempt in range(1, CODE_ATTEMPTS + 1):
-        sequence = _next_sequence(condominium.pk)
+        today_str = timezone.now().strftime("%Y%m%d")
+        random_part = uuid.uuid4().hex[:6].upper()
+        public_code = f"INC-{condominium.pk}-{today_str}-{random_part}"
         try:
             with transaction.atomic():
                 return Incident.objects.create(
-                    condominium=condominium,
-                    condominium_sequence=sequence,
-                    public_code=format_public_code(condominium.pk, sequence),
+                    public_code=public_code,
                     **fields,
                 )
         except IntegrityError:
             if attempt == CODE_ATTEMPTS:
                 raise
-            logger.warning("Colisión de código de incidencia (condominio %s, intento %s).", condominium.pk, attempt)
-    raise IntegrityError("No se pudo generar un código único de incidencia.")  # pragma: no cover
+            logger.warning("Colisión de código de incidencia (intento %s).", attempt)
+    raise IntegrityError("No se pudo generar un código único de incidencia.")
 
 
 def _delete_quietly(storage, names):

@@ -95,19 +95,53 @@ class IncidentTrackingService:
                 return req
             return "GLOBAL"
         if is_directiva_user(user):
-            if req in ("GLOBAL", "IMPORTANTES"):
+            if req in ("GLOBAL", "IMPORTANTES", "PROPIAS", "ASIGNADAS"):
                 return req
-            return "IMPORTANTES"
+            return "GLOBAL"
         if is_staff_user(user):
-            if req in ("PROPIAS", "ASIGNADAS"):
+            if req in ("PROPIAS", "ASIGNADAS", "GLOBAL", "IMPORTANTES"):
                 return req
-            return "ASIGNADAS"
+            return "GLOBAL"
         if is_resident_user(user):
             return "PROPIAS"
         return "PROPIAS"
 
     @classmethod
     def list_incidents(cls, user: User, filters: Dict[str, Any]) -> QuerySet[Incident]:
+        if is_admin_user(user):
+            with TenantContext.as_global():
+                return cls._execute_list_incidents(user, filters)
+        return cls._execute_list_incidents(user, filters)
+
+    @classmethod
+    def _execute_list_incidents(cls, user: User, filters: Dict[str, Any]) -> QuerySet[Incident]:
+        search_q = filters.get("search")
+        if search_q and str(search_q).strip():
+            term = str(search_q).strip()
+            with TenantContext.as_global():
+                qs = Incident.objects.all()
+                q_cond = Q(public_code__icontains=term) | Q(public_code__iexact=term)
+                for part in term.split():
+                    if part:
+                        q_cond |= (
+                            Q(public_code__icontains=part)
+                            | Q(public_code__iexact=part)
+                            | Q(title__icontains=part)
+                            | Q(description__icontains=part)
+                        )
+                if term.isdigit():
+                    q_cond |= Q(pk=int(term))
+
+                return qs.filter(q_cond).select_related(
+                    "reporter_user__person",
+                    "reporter_resident__person",
+                    "category",
+                    "priority",
+                    "current_assignee_staff__person",
+                    "sector",
+                    "unit",
+                ).prefetch_related("status_history", "comments", "attachments").order_by("-created_at")
+
         queryset = Incident.objects.select_related(
             "reporter_user__person",
             "reporter_resident__person",
@@ -125,19 +159,18 @@ class IncidentTrackingService:
         if scope == "PROPIAS" or is_resident_user(user) and not is_admin_user(user):
             q_filter = Q(reporter_user=user)
             if person:
-                q_filter |= Q(reporter_resident__person=person)
+                resident_ids = Resident.objects.all_tenants().filter(person=person).values_list("id", flat=True)
+                q_filter |= Q(reporter_resident_id__in=resident_ids)
             queryset = queryset.filter(q_filter)
         elif scope == "ASIGNADAS" and person:
-            staff_obj = Staff.objects.filter(person=person, status=Staff.Status.ACTIVE).first()
+            staff_obj = Staff.objects.all_tenants().filter(person=person, status=Staff.Status.ACTIVE).first()
             if staff_obj:
                 queryset = queryset.filter(current_assignee_staff=staff_obj)
             else:
                 queryset = queryset.none()
         elif scope == "IMPORTANTES":
-            # Incidencias de alta prioridad o urgentes
             queryset = queryset.filter(Q(priority__code__in=("HIGH", "URGENT")) | Q(priority__rank__gte=3))
 
-        # Filtros adicionales
         status_val = filters.get("status")
         if status_val:
             queryset = queryset.filter(status=status_val)
@@ -177,13 +210,17 @@ class IncidentTrackingService:
             elif sla_lower == "ontime":
                 queryset = queryset.filter(status__in=OPEN_STATUSES).filter(Q(due_at__isnull=True) | Q(due_at__gte=now))
 
-        search_q = filters.get("search")
-        if search_q:
-            queryset = queryset.filter(
-                Q(title__icontains=search_q)
-                | Q(description__icontains=search_q)
-                | Q(public_code__icontains=search_q)
-            )
+        sector_val = filters.get("sector")
+        if sector_val:
+            queryset = queryset.filter(sector_id=sector_val)
+
+        unit_val = filters.get("unit")
+        if unit_val:
+            queryset = queryset.filter(unit_id=unit_val)
+
+        assignee_val = filters.get("assignee")
+        if assignee_val:
+            queryset = queryset.filter(current_assignee_staff_id=assignee_val)
 
         date_from = filters.get("date_from")
         if date_from:
@@ -196,7 +233,19 @@ class IncidentTrackingService:
         return queryset
 
     @classmethod
-    def get_incident_detail(cls, public_code: str, user: User) -> Incident:
+    def get_incident_detail(cls, identifier: Any, user: User) -> Incident:
+        if is_admin_user(user):
+            with TenantContext.as_global():
+                return cls._execute_get_incident_detail(identifier, user)
+        return cls._execute_get_incident_detail(identifier, user)
+
+    @classmethod
+    def _execute_get_incident_detail(cls, identifier: Any, user: User) -> Incident:
+        sid = str(identifier).strip()
+        query = Q(public_code__iexact=sid) | Q(public_code__icontains=sid)
+        if sid.isdigit():
+            query |= Q(pk=int(sid))
+
         try:
             incident = Incident.objects.select_related(
                 "reporter_user__person",
@@ -210,11 +259,13 @@ class IncidentTrackingService:
                 "status_history__changed_by_user__person",
                 "comments__author_user__person",
                 "attachments__uploaded_by_user__person",
-            ).get(public_code=public_code)
+            ).filter(query).first()
+
+            if not incident:
+                raise Incident.DoesNotExist
         except Incident.DoesNotExist:
             raise NotFound("La incidencia solicitada no existe.")
 
-        # Verificar permisos de lectura/acceso
         if is_resident_user(user) and not is_admin_user(user):
             person = getattr(user, "person", None)
             is_reporter = (

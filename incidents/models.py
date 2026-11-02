@@ -69,8 +69,8 @@ class Incident(models.Model):
         CANCELLED = "CANCELLED", "Cancelada"
 
     public_code = models.CharField(max_length=30, unique=True)
-    # Condominio (tenant) dueño de la incidencia y correlativo interno usado para
-    # generar `public_code`. Son nulos solo en filas anteriores a CU18.
+    # Condominio (tenant) dueño de la incidencia. Los registros creados en el Admin
+    # antes de CU18 pueden quedar con este campo nulo.
     condominium = models.ForeignKey(
         "condominiums.Condominium",
         on_delete=models.PROTECT,
@@ -78,7 +78,6 @@ class Incident(models.Model):
         null=True,
         blank=True,
     )
-    condominium_sequence = models.PositiveIntegerField(null=True, blank=True, editable=False)
     reporter_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.SET_NULL,
@@ -138,14 +137,7 @@ class Incident(models.Model):
 
     class Meta:
         db_table = "incident"
-        constraints = [
-            models.UniqueConstraint(
-                fields=("condominium", "condominium_sequence"),
-                name="uq_incident_condo_sequence",
-            )
-        ]
         indexes = [
-            models.Index(fields=("condominium", "-created_at"), name="idx_inc_condo_time"),
             models.Index(
                 fields=("status", "priority", "-created_at"),
                 name="idx_inc_status_priority",
@@ -192,7 +184,9 @@ class Incident(models.Model):
         return max(0, int(delta.total_seconds() / 60))
 
     def save(self, *args, **kwargs):
-        if not self.public_code:
+        if self.public_code:
+            self.public_code = str(self.public_code).strip()
+        else:
             import uuid
             today_str = timezone.now().strftime("%Y%m%d")
             random_part = uuid.uuid4().hex[:6].upper()
