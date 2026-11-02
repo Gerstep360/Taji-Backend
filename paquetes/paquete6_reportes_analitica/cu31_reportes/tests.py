@@ -156,6 +156,20 @@ class Cu31ReportesVoiceTests(APITestCase):
         self.assertIn("logs", source_keys)
         self.assertIn("handovers", source_keys)
 
+    def test_transcription_endpoint_preserves_access_control(self):
+        from unittest.mock import patch
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        url = reverse("cu31-reports-transcribe")
+        with patch("paquetes.paquete6_reportes_analitica.cu31_reportes.transcription.transcribe", return_value="Incidencias pendientes") as provider:
+            response = self.client.post(url, {"audio_file": SimpleUploadedFile("consulta.wav", b"test")}, format="multipart")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"text": "Incidencias pendientes"})
+            provider.assert_called_once()
+            self.client.force_authenticate(user=None)
+            response = self.client.post(url, {"audio_file": SimpleUploadedFile("consulta.wav", b"test")}, format="multipart")
+            self.assertEqual(response.status_code, 401)
+            provider.assert_called_once()
+
     def test_unauthorized_user_denied(self):
         """Usuarios con rol no autorizado (ej. residente ordinario) reciben 403."""
         resident_user = User.objects.create_user(

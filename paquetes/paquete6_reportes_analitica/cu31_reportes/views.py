@@ -6,6 +6,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import UserRateThrottle
 
 from tenancy.context import TenantContext
 
@@ -46,6 +47,26 @@ class Cu31BaseView(APIView):
         response["Cache-Control"] = "no-store"
         response["X-Content-Type-Options"] = "nosniff"
         return response
+
+
+class TranscriptionThrottle(UserRateThrottle):
+    scope = "cu31_transcription"
+    rate = "6/min"
+
+
+class Cu31TranscribeView(Cu31BaseView):
+    parser_classes = [MultiPartParser]
+    throttle_classes = [TranscriptionThrottle]
+
+    @extend_schema(responses=OpenApiTypes.OBJECT, tags=["CU31 - Reportes"])
+    def post(self, request):
+        from .transcription import transcribe
+        if int(request.META.get("CONTENT_LENGTH") or 0) > 1_150_000:
+            raise ValidationError("El audio supera el tamaño permitido. Graba hasta 30 segundos.")
+        audio = request.FILES.get("audio_file")
+        if audio is None:
+            raise ValidationError("Adjunta una grabación de audio.")
+        return Response({"text": transcribe(audio)})
 
 
 class Cu31CatalogView(Cu31BaseView):
@@ -180,7 +201,7 @@ class Cu31VoiceQueryView(Cu31BaseView):
         voice_text = data.get("voice_text", "")
         audio_file = data.get("audio_file")
         if audio_file and not voice_text:
-            voice_text = f"consulta audio {audio_file.name}"
+            raise ValidationError("Primero transcribe el audio mediante /api/v1/cu31/transcribe/ y revisa el texto.")
 
         tenant = TenantContext.get_current_tenant()
 
