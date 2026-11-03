@@ -1,4 +1,15 @@
 from django.contrib.auth.base_user import BaseUserManager
+from django.db import models
+
+
+class SystemPermissionManager(models.Manager):
+    def get_by_natural_key(self, code):
+        return self.get(code=code)
+
+
+class RoleManager(models.Manager):
+    def get_by_natural_key(self, slug):
+        return self.get(slug=slug)
 
 
 class UserManager(BaseUserManager):

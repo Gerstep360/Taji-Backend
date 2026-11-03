@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.http import FileResponse, Http404, JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.views import AssetHistoryView
 
 
 def health_check(_request):
@@ -29,7 +30,10 @@ def api_not_found(_request, _path):
 
 
 urlpatterns = [
+    path("api/v1/assets/scan/", include("paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.urls")),
+    path("api/v1/assets/<int:asset_id>/history/", AssetHistoryView.as_view(), name="asset-qr-history"),
     path("admin/", admin.site.urls),
+    path("health/", health_check, name="health-root"),
     path("api/v1/health/", health_check, name="health"),
     path("api/v1/download/apk/", download_mobile_apk, name="download-apk"),
     path("downloads/taji.apk", download_mobile_apk, name="download-apk-direct"),
