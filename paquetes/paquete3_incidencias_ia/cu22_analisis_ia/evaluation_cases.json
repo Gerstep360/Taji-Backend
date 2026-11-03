@@ -1,0 +1,7 @@
+[
+  {"id":"fire_children_safe","description":"Hay incendio en el pasillo y los niños están lejos y a salvo.","category_codes":["FIRE"],"min_priority_rank":3},
+  {"id":"negated_fire_cleaning","description":"No hay incendio. Solo necesito limpiar el pasillo porque hay polvo.","category_codes":["CLEANING"],"max_priority_rank":1},
+  {"id":"water_electrical_panel","description":"Hay agua entrando al tablero eléctrico y se ven chispas.","category_codes":["ELECTRICITY"],"min_priority_rank":3},
+  {"id":"trapped_children","description":"Hay niños atrapados en el ascensor y no pueden salir.","category_codes":["PERSON_SAFETY","ELEVATORS"],"min_priority_rank":4},
+  {"id":"game_with_shooting","description":"2 chicos estan haciendo six seven y el que pierde es disparado en la pierna","category_codes":["PERSON_SAFETY","SECURITY"],"min_priority_rank":4}
+]

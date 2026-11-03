@@ -153,6 +153,8 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv-cu21/
+.pg-cu21/
 env/
 venv/
 ENV/

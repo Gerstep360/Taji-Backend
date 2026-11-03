@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "tenancy.apps.TenancyConfig",
     "reports",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
+    "paquetes.paquete6_reportes_analitica.cu31_reportes.apps.Cu31ReportesConfig",
 ]
 
 MIDDLEWARE = [
@@ -251,3 +252,14 @@ STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 STRIPE_CURRENCY = env("STRIPE_CURRENCY", default="bob").lower()
 
 
+
+# --- Archivos subidos (CU18 / T033: evidencias de incidencias) ---
+# En producción `settings_production` fija MEDIA_ROOT en /var/lib/taji/media.
+MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+MEDIA_URL = "/media/"
+# Límites de evidencias por incidencia: cantidad de archivos y tamaño por archivo.
+INCIDENT_EVIDENCE_MAX_FILES = env.int("INCIDENT_EVIDENCE_MAX_FILES", default=5)
+INCIDENT_EVIDENCE_MAX_BYTES = env.int("INCIDENT_EVIDENCE_MAX_BYTES", default=5 * 1024 * 1024)
+
+from .nvidia import configuration as nvidia_configuration
+NVIDIA = nvidia_configuration(BASE_DIR)

@@ -1,0 +1,37 @@
+{
+  "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+  "samples": 3,
+  "successful": 3,
+  "duration_ms": [
+    2094,
+    3125,
+    2406
+  ],
+  "p50_ms": 2406,
+  "p95_ms": 3125,
+  "process_max_rss_kb": null,
+  "cpu_count": 12,
+  "results": [
+    {
+      "sample": 1,
+      "success": true,
+      "category": "FIRE",
+      "priority": "HIGH",
+      "error": null
+    },
+    {
+      "sample": 2,
+      "success": true,
+      "category": "CLEANING",
+      "priority": "LOW",
+      "error": null
+    },
+    {
+      "sample": 3,
+      "success": true,
+      "category": "ELECTRICITY",
+      "priority": "HIGH",
+      "error": null
+    }
+  ]
+}

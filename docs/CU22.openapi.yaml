@@ -1,0 +1,234 @@
+openapi: 3.0.3
+info:
+  title: Taji API
+  version: 1.0.0
+  description: API REST de Taji para autenticación, RBAC y los módulos del condominio.
+    La aplicación móvil usa Bearer JWT y la web cookies HttpOnly.
+paths:
+  /incident-ai/catalogs/:
+    get:
+      operationId: incident_ai_catalogs_retrieve
+      tags:
+      - incident-ai
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /incident-ai/catalogs/{kind}/:
+    post:
+      operationId: incident_ai_catalogs_create
+      parameters:
+      - in: path
+        name: kind
+        schema:
+          type: string
+        required: true
+      tags:
+      - incident-ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /incident-ai/catalogs/{kind}/{id}/:
+    patch:
+      operationId: incident_ai_catalogs_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: kind
+        schema:
+          type: string
+        required: true
+      tags:
+      - incident-ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /incident-ai/metrics/:
+    get:
+      operationId: incident_ai_metrics_retrieve
+      tags:
+      - incident-ai
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /incidents/{public_code}/ai/:
+    get:
+      operationId: incidents_ai_retrieve
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+        required: true
+      tags:
+      - incidents
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    post:
+      operationId: incidents_ai_create
+      parameters:
+      - in: path
+        name: public_code
+        schema:
+          type: string
+        required: true
+      tags:
+      - incidents
+      security:
+      - jwtAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /incidents/{public_code}/ai/{analysis_id}/review/:
+    post:
+      operationId: incidents_ai_review_create
+      parameters:
+      - in: path
+        name: analysis_id
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: public_code
+        schema:
+          type: string
+        required: true
+      tags:
+      - incidents
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ReviewRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+components:
+  schemas:
+    ReviewRequest:
+      type: object
+      properties:
+        category:
+          type: integer
+        priority:
+          type: integer
+        reason:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        safety_override:
+          type: boolean
+          default: false
+      required:
+      - category
+      - priority
+      - reason
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer JWT para móvil; la web usa cookies HttpOnly equivalentes.
+tags:
+- name: Autenticación
+  description: 'CU01: Registro y ciclo de sesión.'
+- name: Roles y Permisos
+  description: 'CU02: Gestión de roles, permisos RBAC y aprobación de residentes.'
+- name: Residentes
+  description: 'CU05: CRUD de residentes y copropietarios.'
+- name: Personal
+  description: 'CU07: CRUD y clasificación del personal del condominio.'
+- name: Seguridad - Visitas
+  description: 'CU08: Registro y autorización anticipada de visitantes.'
+- name: Seguridad - QR de visita
+  description: 'CU09: Generación y consulta del QR temporal de una visita.'
+- name: Seguridad - Validación QR
+  description: 'CU10: Validación del QR y autorización de ingreso del visitante.'
+- name: Sistema
+  description: Salud y metadatos del servicio.

@@ -69,6 +69,16 @@ class Incident(models.Model):
         CANCELLED = "CANCELLED", "Cancelada"
 
     public_code = models.CharField(max_length=30, unique=True)
+    # Condominio (tenant) dueño de la incidencia y correlativo interno usado para
+    # generar `public_code`. Son nulos solo en filas anteriores a CU18.
+    condominium = models.ForeignKey(
+        "condominiums.Condominium",
+        on_delete=models.PROTECT,
+        related_name="incidents",
+        null=True,
+        blank=True,
+    )
+    condominium_sequence = models.PositiveIntegerField(null=True, blank=True, editable=False)
     reporter_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.SET_NULL,
@@ -128,7 +138,14 @@ class Incident(models.Model):
 
     class Meta:
         db_table = "incident"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("condominium", "condominium_sequence"),
+                name="uq_incident_condo_sequence",
+            )
+        ]
         indexes = [
+            models.Index(fields=("condominium", "-created_at"), name="idx_inc_condo_time"),
             models.Index(
                 fields=("status", "priority", "-created_at"),
                 name="idx_inc_status_priority",
@@ -144,6 +161,49 @@ class Incident(models.Model):
                 name="idx_incident_due_open",
             ),
         ]
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status in (
+            self.Status.REPORTED,
+            self.Status.REVIEWED,
+            self.Status.ASSIGNED,
+            self.Status.IN_PROGRESS,
+        )
+
+    @property
+    def is_overdue(self) -> bool:
+        if not self.is_pending or not self.due_at:
+            return False
+        return timezone.now() > self.due_at
+
+    @property
+    def time_remaining_minutes(self) -> int | None:
+        if not self.due_at:
+            return None
+        delta = self.due_at - timezone.now()
+        return int(delta.total_seconds() / 60)
+
+    @property
+    def overdue_by_minutes(self) -> int:
+        if not self.is_overdue or not self.due_at:
+            return 0
+        delta = timezone.now() - self.due_at
+        return max(0, int(delta.total_seconds() / 60))
+
+    def save(self, *args, **kwargs):
+        if not self.public_code:
+            import uuid
+            today_str = timezone.now().strftime("%Y%m%d")
+            random_part = uuid.uuid4().hex[:6].upper()
+            self.public_code = f"INC-{today_str}-{random_part}"
+        if not self.due_at and self.priority and self.priority.target_minutes:
+            base_time = self.created_at or timezone.now()
+            self.due_at = base_time + timezone.timedelta(minutes=self.priority.target_minutes)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.public_code}: {self.title or self.description[:30]}"
 
 
 class IncidentAttachment(models.Model):
@@ -170,6 +230,18 @@ class IncidentAttachment(models.Model):
         indexes = [
             models.Index(fields=("incident",), name="idx_inc_attachment_inc")
         ]
+
+    def __str__(self):
+        return f"{self.incident.public_code} - {self.get_file_type_display()}"
+
+
+class IncidentAIWorkerHeartbeat(models.Model):
+    """Disponibilidad del procesador compartida entre API y trabajador."""
+    worker_id = models.UUIDField(primary_key=True, editable=False)
+    last_seen = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = 'incident_ai_worker_heartbeat'
 
 
 class IncidentAssignment(models.Model):
@@ -207,6 +279,9 @@ class IncidentAssignment(models.Model):
             )
         ]
 
+    def __str__(self):
+        return f"{self.incident.public_code} -> {self.assigned_to_staff}"
+
 
 class IncidentStatusHistory(models.Model):
     incident = models.ForeignKey(Incident, on_delete=models.CASCADE, related_name="status_history")
@@ -227,6 +302,9 @@ class IncidentStatusHistory(models.Model):
         indexes = [
             models.Index(fields=("incident", "changed_at"), name="idx_incident_history")
         ]
+
+    def __str__(self):
+        return f"{self.incident.public_code}: {self.from_status} -> {self.to_status}"
 
 
 class IncidentComment(models.Model):
@@ -254,6 +332,9 @@ class IncidentComment(models.Model):
             models.Index(fields=("incident", "created_at"), name="idx_inc_comment_time")
         ]
 
+    def __str__(self):
+        return f"{self.incident.public_code} ({self.visibility}): {self.body[:30]}"
+
 
 class RiskRule(models.Model):
     code = models.CharField(max_length=60, unique=True)
@@ -274,6 +355,20 @@ class RiskRule(models.Model):
 
 
 class IncidentAIAnalysis(models.Model):
+    class ExecutionStatus(models.TextChoices):
+        QUEUED = 'QUEUED', 'En espera'
+        RUNNING = 'RUNNING', 'Analizando'
+        SUCCEEDED = 'SUCCEEDED', 'Analizado'
+        FAILED = 'FAILED', 'Revisión manual'
+
+    execution_status = models.CharField(max_length=16, choices=ExecutionStatus.choices, default=ExecutionStatus.SUCCEEDED)
+    requested_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_incident_analyses')
+    input_snapshot = models.JSONField(default=dict)
+    safety_findings = models.JSONField(default=list)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    error_code = models.CharField(max_length=40, blank=True)
     class ReviewStatus(models.TextChoices):
         PENDING = "PENDING", "Pendiente"
         ACCEPTED = "ACCEPTED", "Aceptado"
@@ -321,6 +416,7 @@ class IncidentAIAnalysis(models.Model):
     class Meta:
         db_table = "incident_ai_analysis"
         constraints = [
+            models.UniqueConstraint(fields=('incident',), condition=Q(execution_status__in=('QUEUED', 'RUNNING')), name='uq_incident_ai_active_job'),
             models.CheckConstraint(
                 condition=Q(confidence__isnull=True)
                 | Q(confidence__gte=0, confidence__lte=1),
@@ -328,7 +424,8 @@ class IncidentAIAnalysis(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=("incident", "-created_at"), name="idx_ai_incident_time")
+            models.Index(fields=("incident", "-created_at"), name="idx_ai_incident_time"),
+            models.Index(fields=('execution_status', 'created_at'), name='idx_ai_execution_queue'),
         ]
 
 
@@ -357,3 +454,17 @@ class IncidentAIEntity(models.Model):
         indexes = [
             models.Index(fields=("analysis",), name="idx_ai_entity_analysis")
         ]
+
+
+class IncidentAIReview(models.Model):
+    """Corrección separada: la predicción original nunca se reemplaza."""
+    analysis = models.OneToOneField(IncidentAIAnalysis, on_delete=models.PROTECT, related_name='human_review')
+    reviewer = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True)
+    category = models.ForeignKey(IncidentCategory, on_delete=models.PROTECT)
+    priority = models.ForeignKey(PriorityLevel, on_delete=models.PROTECT)
+    reason = models.TextField()
+    safety_override = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'incident_ai_review'
