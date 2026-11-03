@@ -300,6 +300,23 @@ class Cu31ReportesVoiceTests(APITestCase):
         self.assertIn("3 registros", data["spoken_summary"])
         self.assertEqual(data["speech_payload"]["lang"], "es-ES")
 
+    def test_export_pdf_is_real_binary_and_not_html(self):
+        response=self.client.post(reverse('cu31-reports-export'),{'source':'incidents','columns':['public_code','title','status'],'format':'pdf'},format='json')
+        self.assertEqual(response.status_code,200,response.content[:100])
+        self.assertEqual(response['Content-Type'],'application/pdf')
+        self.assertTrue(response.content.startswith(b'%PDF-'))
+        self.assertTrue(response.content.rstrip().endswith(b'%%EOF'))
+        self.assertIn('.pdf',response['Content-Disposition'])
+
+    def test_explicit_view_reports_permission_enables_custom_role(self):
+        from accounts.models import SystemPermission
+        custom=Role.objects.create(name='Consulta móvil',slug='consulta-movil')
+        custom.permissions.add(SystemPermission.objects.get(code='view_reports'))
+        self.membership_a.role=custom;self.membership_a.save()
+        response=self.client.get(reverse('cu31-reports-catalog'))
+        self.assertEqual(response.status_code,200)
+        self.assertIn('pdf',response.data['formats'])
+
     def test_export_xlsx(self):
         """CU31 - Tarea 1: Exportación en formato binario XLSX Excel."""
         url = reverse("cu31-reports-export")

@@ -4,6 +4,7 @@ from django.utils import timezone
 
 
 class Announcement(models.Model):
+    condominium = models.ForeignKey('condominiums.Condominium', on_delete=models.PROTECT, null=True, blank=True, related_name='announcements')
     class Audience(models.TextChoices):
         ALL = "ALL", "Todos"
         RESIDENTS = "RESIDENTS", "Residentes"

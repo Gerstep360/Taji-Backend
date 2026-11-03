@@ -460,6 +460,16 @@ class SectorApiTests(APITestCase):
         self.client.force_authenticate(self.user)
         self.list_url = reverse("sector-list")
         self.condominium = Condominium.objects.first() or Condominium.objects.create(name="Taji")
+        from tenancy.models import TenantMembership
+        TenantMembership.objects.create(user=self.user, condominium=self.condominium, role=role, is_default=True)
+
+    def test_sector_creation_uses_selected_membership_not_first_condominium(self):
+        from tenancy.models import TenantMembership
+        other = Condominium.objects.create(name="Segundo condominio")
+        TenantMembership.objects.create(user=self.user, condominium=other, role=self.user.role)
+        response = self.client.post(self.list_url, {"code":"SECOND", "name":"Otro sector", "sector_type":Sector.Type.TOWER}, format="json", HTTP_X_TENANT_ID=str(other.pk))
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Sector.objects.all_tenants().get(pk=response.data['id']).condominium_id, other.pk)
 
     def test_create_sector_without_parent(self):
         response = self.client.post(

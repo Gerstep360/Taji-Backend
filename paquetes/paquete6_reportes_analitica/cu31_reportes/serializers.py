@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .catalog import SOURCES
 
 OPERATOR_CHOICES = ("eq", "ne", "gte", "lte", "contains", "is_empty", "not_empty")
-FORMAT_CHOICES = ("xlsx", "html", "csv")
+FORMAT_CHOICES = ("pdf", "xlsx", "html", "csv")
 
 
 class FilterItemSerializer(serializers.Serializer):
@@ -35,7 +35,7 @@ class VoiceQueryRequestSerializer(serializers.Serializer):
     )
     audio_file = serializers.FileField(required=False, allow_null=True)
     preferred_format = serializers.ChoiceField(
-        choices=("preview", "xlsx", "html", "csv"), default="preview"
+        choices=("preview", "pdf", "xlsx", "html", "csv"), default="preview"
     )
     auto_narrate = serializers.BooleanField(default=True)
 

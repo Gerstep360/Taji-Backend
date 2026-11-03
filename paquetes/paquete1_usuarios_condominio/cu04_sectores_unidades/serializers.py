@@ -29,7 +29,10 @@ class SectorSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        validated_data["condominium"] = Condominium.objects.first()
+        from tenancy.context import TenantContext
+        validated_data.setdefault("condominium", TenantContext.get_current_tenant())
+        if not validated_data["condominium"]:
+            raise serializers.ValidationError("Selecciona un condominio activo antes de crear un sector.")
         return super().create(validated_data)
 
 

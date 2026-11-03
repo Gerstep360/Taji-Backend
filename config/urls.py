@@ -47,6 +47,7 @@ urlpatterns = [
     path("api/v1/roles/", include("paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.urls")),
     path("api/v1/saas/", include("tenancy.urls")),
     path("api/v1/reports/", include("reports.urls")),
+    path("api/v1/community/", include("community.urls")),
     path("api/v1/audit/", include("auditlog.urls")),
     path("api/v1/", include("condominiums.urls")),
     path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu08_visitantes.urls")),

@@ -83,6 +83,48 @@ th{{background:#eff6ff}}tr:nth-child(even){{background:#f8fafc}}p{{white-space:p
     return response
 
 
+def export_pdf(title, columns, rows, tenant, description):
+    """PDF paginado, sin navegador, sin ejecutar HTML procedente de los datos."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A3, A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
+    output = BytesIO()
+    page = landscape(A3) if len(columns) > 8 else landscape(A4) if len(columns) > 4 else A4
+    doc = SimpleDocTemplate(output, pagesize=page, rightMargin=30, leftMargin=30,
+        topMargin=32, bottomMargin=38, title=title, author="Taji")
+    styles = getSampleStyleSheet()
+    styles['Title'].textColor = colors.HexColor('#10233C')
+    cell = ParagraphStyle('TajiCell', fontName='Helvetica', fontSize=8, leading=11, wordWrap='CJK')
+    heading = ParagraphStyle('TajiHeading', parent=cell, textColor=colors.white, fontName='Helvetica-Bold')
+    def paragraph(value, style=cell):
+        return Paragraph(escape(str(value if value is not None else '')).replace('\n', '<br/>'), style)
+    story = [Paragraph('TAJI / REPORTES', styles['Heading3']), paragraph(title, styles['Title']),
+        paragraph(tenant.name, styles['Heading2']), paragraph(description), Spacer(1, 16)]
+    if not rows:
+        story.append(paragraph('No hay registros para los filtros seleccionados.'))
+    else:
+        data = [[paragraph(column.label, heading) for column in columns]]
+        data.extend([[paragraph(value) for value in row] for row in rows])
+        table = LongTable(data, colWidths=[doc.width / len(columns)] * len(columns), repeatRows=1, splitInRow=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0F6FFF')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F4F7FB')]),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 7),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 7), ('TOPPADDING', (0, 0), (-1, -1), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+            ('LINEBELOW', (0, 0), (-1, -1), .3, colors.HexColor('#DCE4ED')),
+        ]))
+        story.append(table)
+    def footer(canvas, document):
+        canvas.setFont('Helvetica', 8)
+        canvas.setFillColor(colors.HexColor('#6F7F93'))
+        canvas.drawString(30, 20, 'Taji | '+timezone.localtime().strftime('%d/%m/%Y %H:%M'))
+        canvas.drawRightString(page[0]-30, 20, 'Página '+str(document.page))
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    return HttpResponse(output.getvalue(), content_type='application/pdf')
+
+
 def export_csv(title, columns, rows, tenant, description):
     """Genera un archivo delimitado por comas (CSV) con codificación UTF-8 BOM."""
     output = StringIO()
