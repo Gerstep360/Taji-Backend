@@ -363,6 +363,17 @@
   }
 },
 {
+  "model": "accounts.systempermission",
+  "pk": 34,
+  "fields": {
+    "code": "manage_assets",
+    "name": "Gestionar activos del condominio",
+    "description": "Permiso preparado para módulos futuros.",
+    "module": "general",
+    "is_active": true
+  }
+},
+{
   "model": "accounts.role",
   "pk": 1,
   "fields": {
@@ -404,7 +415,8 @@
       14,
       13,
       19,
-      9
+      9,
+      34
     ]
   }
 },

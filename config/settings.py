@@ -128,12 +128,12 @@ def _clean_cors_origin(url_str):
 
 FRONTEND_URLS = env.list(
     "FRONTEND_URLS",
-    default=["http://localhost:4200", "http://127.0.0.1:4200"],
+    default=["http://localhost:4300", "http://127.0.0.1:4300"],
 )
 CORS_ALLOWED_ORIGINS = [_clean_cors_origin(url) for url in FRONTEND_URLS if url]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = (
-    [r"^http://(?:localhost|127\.0\.0\.1|(?:\d{1,3}\.){3}\d{1,3}):4200$"]
+    [r"^http://(?:localhost|127\.0\.0\.1|(?:\d{1,3}\.){3}\d{1,3}):4[0-9]{3}$"]
     if DEBUG
     else []
 )

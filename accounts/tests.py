@@ -39,7 +39,7 @@ class AuthApiTests(APITestCase):
 
     def test_rbac_catalog_is_seeded(self):
         self.assertEqual(Role.objects.count(), 7)
-        self.assertEqual(SystemPermission.objects.count(), 33)
+        self.assertEqual(SystemPermission.objects.count(), 34)
         self.assertTrue(self.role.is_public)
         self.assertFalse(Role.objects.get(slug="administrador").is_public)
 
@@ -459,7 +459,7 @@ class AuthApiTests(APITestCase):
     def test_initial_roles_fixture_matches_the_merged_rbac_catalog(self):
         call_command("loaddata", "initial_roles", verbosity=0)
         self.assertEqual(Role.objects.count(), len(ROLE_DEFINITIONS))
-        self.assertEqual(SystemPermission.objects.count(), 33)
+        self.assertEqual(SystemPermission.objects.count(), 34)
         for slug, definition in ROLE_DEFINITIONS.items():
             role = Role.objects.get(slug=slug)
             self.assertEqual(role.name, definition["name"])
