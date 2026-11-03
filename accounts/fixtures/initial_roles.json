@@ -72,6 +72,16 @@
   {
     "model": "accounts.systempermission",
     "fields": {
+      "code": "manage_assets",
+      "name": "Gestionar activos del condominio",
+      "description": "Permiso preparado para m\u00f3dulos futuros.",
+      "module": "general",
+      "is_active": true
+    }
+  },
+  {
+    "model": "accounts.systempermission",
+    "fields": {
       "code": "manage_visits",
       "name": "Gestionar visitas",
       "description": "Permiso preparado para m\u00f3dulos futuros.",
@@ -462,6 +472,9 @@
         ],
         [
           "manage_roles"
+        ],
+        [
+          "manage_assets"
         ]
       ]
     }

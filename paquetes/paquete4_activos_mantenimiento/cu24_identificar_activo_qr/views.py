@@ -11,8 +11,7 @@ from maintenance.models import Asset
 from tenancy.context import TenantContext
 
 from .permissions import CanScanAssets, HasAssetsTenant
-from .serializers import AssetQRScanResponseSerializer, QRScanRequestSerializer, AssetHistoryResponseSerializer
-from django.db.models import Q
+from .serializers import AssetQRScanResponseSerializer, QRScanRequestSerializer
 
 ASSET_QR_PAYLOAD_PREFIX = "TAJI-ASSET"
 
@@ -77,27 +76,3 @@ class QRScanView(APIView):
 
         asset_serializer = AssetQRScanResponseSerializer(asset)
         return Response(asset_serializer.data, status=status.HTTP_200_OK)
-
-
-class AssetHistoryView(QRScanView):
-    """Consulta CU24 sobre modelos existentes; no expone CRUD de CU23/CU25."""
-    http_method_names = ["get", "head", "options"]
-
-    @extend_schema(tags=["QR Escaneo - CU24"], responses=AssetHistoryResponseSerializer)
-    def get(self, request, asset_id):
-        from django.shortcuts import get_object_or_404
-        asset = get_object_or_404(self.get_queryset(), pk=asset_id)
-        tenant_id = TenantContext.get_current_tenant_id()
-        incidents = asset.incidents.filter(condominium_id=tenant_id).order_by("-created_at", "-pk")[:50]
-        orders = asset.work_orders.filter(
-            Q(incident__isnull=True) | Q(incident__condominium_id=tenant_id),
-        ).filter(
-            Q(current_assignee_staff__isnull=True) | Q(current_assignee_staff__condominium_id=tenant_id),
-        ).order_by("-created_at", "-pk")[:50]
-        plans = asset.maintenance_plans.order_by("-next_due_at", "-pk")[:50]
-        return Response({
-            "asset_id": asset.pk,
-            "incidents": list(incidents.values("id", "public_code", "title", "status", "created_at")),
-            "work_orders": list(orders.values("id", "public_code", "title", "work_type", "status", "scheduled_for", "completed_at", "created_at")),
-            "maintenance_plans": list(plans.values("id", "name", "frequency_days", "last_completed_at", "next_due_at", "is_active")),
-        })

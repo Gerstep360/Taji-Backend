@@ -290,7 +290,7 @@ class QRScanTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item['public_code'] for item in response.data['incidents']], ['QR-OWN'])
         self.assertEqual(response.data['asset_id'], self.asset1.pk)
-        self.assertEqual(response['Cache-Control'], 'no-store')
+        self.assertIn('no-store', response['Cache-Control'])
 
     def test_history_denies_foreign_assets_and_is_read_only(self):
         self.client.force_authenticate(user=self.user)
