@@ -1,0 +1,51 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+allowmixing
+title CU32 Reconocimiento por cámara
+left to right direction
+skinparam dpi 160
+skinparam classBackgroundColor #F8F9FA
+skinparam classBorderColor #929DA8
+hide circle
+hide empty members
+class "InterfazReconocimiento" as InterfazReconocimiento <<boundary>> {
+  + iniciarCamara()
+  + detenerCamara()
+  + mostrarDetecciones()
+}
+class "ControladorCamara" as ControladorCamara <<control>> {
+  + detectarFotograma()
+  + recortarGuia()
+  + liberarPistas()
+}
+class "ServicioPlacas" as ServicioPlacas <<control>> {
+  + validarRecorte()
+  + leerPlaca()
+  + buscarPorCondominio()
+}
+class "SesionCamara" as SesionCamara <<entity>> {
+  - estado
+  - detecciones
+  - eventosRecientes
+}
+class "ConsensoPlaca" as ConsensoPlaca <<control>> {
+  + observar(placa, instante)
+}
+class "VehiculoDemo" as VehiculoDemo <<entity>> {
+  - placa
+  - descripcion
+  - condominioId
+}
+class "Condominio" as Condominio <<entity>>
+actor "Operador" as A
+A --> InterfazReconocimiento
+InterfazReconocimiento --> ControladorCamara
+ControladorCamara --> SesionCamara
+ControladorCamara --> ConsensoPlaca
+ControladorCamara --> ServicioPlacas
+ServicioPlacas --> VehiculoDemo
+Condominio "1" -- "0..*" VehiculoDemo
+@enduml

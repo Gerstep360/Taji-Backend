@@ -1,0 +1,36 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+title Diagrama de navegación — CU32 Reconocimiento por cámara
+skinparam ArrowColor #3895D3
+skinparam state {
+ BackgroundColor #F7FAFC
+ BorderColor #40566A
+ RoundCorner 12
+}
+state "Menú de seguridad" as M
+state "Visor apagado" as A
+state "Permiso de cámara" as P
+state "Cargando IA" as C
+state "Visor en vivo y eventos" as V
+state "Lectura de placa" as L
+state "Error recuperable" as E
+[*] --> M
+M --> A : Permiso validate_visits
+A --> P : Iniciar cámara
+P --> C : Permiso concedido
+P --> E : Denegado o sin cámara
+C --> V : Modelo listo
+C --> E : Fallo de carga
+V --> L : Habilitar OCR y encuadrar
+L --> V : Desactivar OCR o retirar vehículo
+V --> A : Detener
+L --> A : Detener
+E --> P : Reintentar
+A --> M : Salir
+V --> M : Salir y liberar recursos
+L --> M : Salir y cancelar lectura
+M --> [*]
+@enduml
