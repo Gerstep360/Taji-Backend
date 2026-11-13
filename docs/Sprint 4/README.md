@@ -1,6 +1,6 @@
 # Sprint 4 — CU32 Reconocimiento por cámara
 
-Especificación: [ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md](../../ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md). Identificadores CU32 y T146–T149 propuestos para este incremento. Entrega local: no se desplegó al VPS ni se modificó Móvil.
+Especificación: [ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md](ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md). Identificadores CU32 y T146–T149 propuestos para este incremento. No se modificó Móvil.
 
 ## Ficha del caso de uso
 
@@ -67,9 +67,9 @@ Ambas rutas requieren autenticación y permiso, no aceptan un condominio del cue
 
 | Comprobación | Resultado |
 | --- | --- |
-| Django y migraciones en SQLite aislada | [702 aprobadas y 6 omitidas](<pruebas/evidencias/backend.log>); 7 pruebas específicas de CU32 |
-| Angular | [130 aprobadas](<pruebas/evidencias/web-unit.log>); build correcto con advertencias de dependencias y del presupuesto previo de estilos |
-| Edge, fuente sintética y API controlada | [5 recorridos aprobados](<pruebas/evidencias/web-e2e.log>), incluido COCO-SSD real sobre una fuente sintética vacía; capturas [1440 px](<pruebas/evidencias/CU32-escritorio.png>) y [390 px](<pruebas/evidencias/CU32-390px.png>) |
+| Django y migraciones en SQLite aislada | 702 aprobadas y 6 omitidas en la entrega inicial; 7 pruebas específicas de CU32 |
+| Angular | 154 aprobadas después de integrar main; build correcto con advertencias de dependencias y del presupuesto previo de estilos |
+| Edge, fuente sintética y API controlada | 5 recorridos aprobados, incluido COCO-SSD real sobre una fuente sintética vacía; capturas [1440 px](<pruebas/evidencias/CU32-escritorio.png>) y [390 px](<pruebas/evidencias/CU32-390px.png>) |
 | Pendiente | Validar clases/precisión con webcam y placas autorizadas; probar OCR real y medir recursos en el despliegue objetivo. |
 
 ### Archivos de implementación
