@@ -1,10 +1,39 @@
 """Cliente NVIDIA acotado: sin SDK pesado, herramientas, redirecciones ni reintentos ciegos."""
 import json
 import re
+from contextlib import contextmanager
+from threading import Lock
 from time import monotonic
 from urllib.parse import urlparse
 import httpx
 from django.conf import settings
+
+
+_shared_client = None
+_client_lock = Lock()
+
+
+@contextmanager
+def provider_client(transport):
+    global _shared_client
+    if transport is not None:
+        with httpx.Client(transport=transport, follow_redirects=False) as client:
+            yield client
+        return
+    with _client_lock:
+        if _shared_client is None:
+            _shared_client = httpx.Client(follow_redirects=False,
+                limits=httpx.Limits(max_connections=2, max_keepalive_connections=1, keepalive_expiry=120))
+        client = _shared_client
+    yield client
+
+
+def reset_connection():
+    global _shared_client
+    with _client_lock:
+        if _shared_client is not None:
+            _shared_client.close()
+            _shared_client = None
 
 
 class ProviderFailure(Exception):
@@ -41,6 +70,25 @@ def redact(text):
 
 
 def analyze(snapshot, categories, priorities, *, images=None, transport=None):
+    """Una recuperación acotada: no dejar un reporte 30 s en una conexión atascada."""
+    started = monotonic()
+    budget = min(settings.NVIDIA['TIMEOUT_SECONDS'], 30 if images else 20)
+    for attempt in range(2):
+        remaining = budget - (monotonic() - started)
+        if remaining <= 0:
+            raise ProviderFailure('timeout')
+        try:
+            return _analyze_once(snapshot, categories, priorities, images=images,
+                transport=transport, timeout=min(remaining, 20 if images else 9))
+        except ProviderFailure as error:
+            if attempt or error.code not in ('timeout', 'connection_error', 'provider_unavailable'):
+                raise
+            if transport is None:
+                reset_connection()
+    raise ProviderFailure('timeout')
+
+
+def _analyze_once(snapshot, categories, priorities, *, images=None, transport=None, timeout):
     config = settings.NVIDIA
     if not config['ENABLED'] or not config['API_KEY']:
         raise ProviderFailure('not_configured')
@@ -51,7 +99,7 @@ def analyze(snapshot, categories, priorities, *, images=None, transport=None):
         'report': {key: redact(str(snapshot.get(key, ''))) for key in ('title', 'description', 'location')},
         'categories': categories, 'priorities': priorities,
         'image_attachment_ids': [image['id'] for image in images or []],
-    }, ensure_ascii=False)
+    }, ensure_ascii=False, separators=(',', ':'))
     if images:
         parts = [{'type': 'text', 'text': content}]
         for image in images:
@@ -59,8 +107,10 @@ def analyze(snapshot, categories, priorities, *, images=None, transport=None):
                           {'type': 'image_url', 'image_url': {'url': image['data_url']}}])
         content = parts
     payload = {
-        'model': config['MODEL'], 'temperature': 0, 'max_tokens': config['MAX_TOKENS'],
-        'stream': False, 'chat_template_kwargs': {'enable_thinking': False},
+        'model': config['MODEL'], 'temperature': 0.2, 'top_k': 1,
+        'max_tokens': min(config['MAX_TOKENS'], 1600 if images else 1200),
+        'stream': False,
+        'chat_template_kwargs': {'enable_thinking': False},
         'response_format': {'type': 'json_object'},
         'messages': [
             {'role': 'system', 'content': SYSTEM_PROMPT},
@@ -69,11 +119,10 @@ def analyze(snapshot, categories, priorities, *, images=None, transport=None):
     }
     started = monotonic()
     try:
-        with httpx.Client(timeout=httpx.Timeout(config['TIMEOUT_SECONDS'], connect=5),
-                          follow_redirects=False, transport=transport) as client:
+        with provider_client(transport) as client:
             with client.stream('POST', url + '/chat/completions', headers={
                 'Authorization': 'Bearer ' + config['API_KEY'], 'Accept': 'application/json',
-            }, json=payload) as response:
+            }, json=payload, timeout=httpx.Timeout(timeout, connect=min(3, timeout))) as response:
                 if response.status_code == 429:
                     raise ProviderFailure('rate_limited')
                 if response.status_code in (401, 403):
@@ -86,7 +135,7 @@ def analyze(snapshot, categories, priorities, *, images=None, transport=None):
                     raise ProviderFailure('provider_rejected')
                 body = bytearray()
                 for chunk in response.iter_bytes():
-                    if monotonic() - started > config['TIMEOUT_SECONDS']:
+                    if monotonic() - started > timeout:
                         raise ProviderFailure('timeout')
                     body.extend(chunk)
                     if len(body) > 128000:
@@ -103,6 +152,11 @@ def analyze(snapshot, categories, priorities, *, images=None, transport=None):
         result = json.loads(raw, parse_constant=reject_constant)
         if not isinstance(result, dict):
             raise ProviderFailure('invalid_response')
+        # Un placeholder vacío no es una entidad: no inventar texto para completarlo.
+        # El JSON literal del proveedor permanece intacto en `raw` para auditoría.
+        if isinstance(result.get('entities'), list):
+            result['entities'] = [entity for entity in result['entities'] if not (
+                isinstance(entity, dict) and isinstance(entity.get('text'), str) and not entity['text'].strip())]
         return result, raw
     except httpx.TimeoutException:
         raise ProviderFailure('timeout') from None

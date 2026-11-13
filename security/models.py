@@ -7,6 +7,27 @@ from django.utils import timezone
 from tenancy.managers import TenantAwareManager
 
 
+class DemoVehicle(models.Model):
+    """Catálogo mínimo de CU32; una coincidencia no autoriza el ingreso."""
+
+    condominium = models.ForeignKey("condominiums.Condominium", on_delete=models.CASCADE)
+    plate = models.CharField(max_length=20)
+    description = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("condominium", "plate"), name="cu32_unique_tenant_plate"),
+        ]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        from .plate import normalize_plate
+
+        self.plate = normalize_plate(self.plate)
+        if not self.plate:
+            raise ValidationError({"plate": "Usa letras y números; se admiten espacios y guiones."})
+
+
 class VisitAuthorization(models.Model):
     objects = TenantAwareManager()
 

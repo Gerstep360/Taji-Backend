@@ -4,6 +4,7 @@ from django.utils import timezone
 
 
 class CommonArea(models.Model):
+    condominium = models.ForeignKey('condominiums.Condominium', on_delete=models.PROTECT, null=True, blank=True, related_name='common_areas')
     class Status(models.TextChoices):
         AVAILABLE = "AVAILABLE", "Disponible"
         UNAVAILABLE = "UNAVAILABLE", "No disponible"
@@ -150,6 +151,7 @@ class Reservation(models.Model):
 
 
 class Assembly(models.Model):
+    condominium = models.ForeignKey('condominiums.Condominium', on_delete=models.PROTECT, null=True, blank=True, related_name='assemblies')
     class Status(models.TextChoices):
         SCHEDULED = "SCHEDULED", "Programada"
         IN_PROGRESS = "IN_PROGRESS", "En progreso"

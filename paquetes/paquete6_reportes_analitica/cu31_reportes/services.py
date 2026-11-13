@@ -245,6 +245,8 @@ class VoiceReportService:
 
     @classmethod
     def _detect_format(cls, normalized):
+        if "pdf" in normalized:
+            return "pdf"
         if any(w in normalized for w in ("excel", "xlsx", "descargar excel", "hoja de calculo")):
             return "xlsx"
         if any(w in normalized for w in ("html", "imprimir", "pagina", "web")):

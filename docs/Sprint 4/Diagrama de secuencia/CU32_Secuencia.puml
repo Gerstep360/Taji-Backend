@@ -1,0 +1,48 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+title CU32 Reconocimiento por cámara
+hide footbox
+autonumber
+actor Operador as A
+boundary "Visor Angular" as I
+participant "Webcam / COCO-SSD" as C
+control "API Django" as D
+participant NVIDIA as N
+database "Registro TAJI" as B
+group Inicio explícito
+A -> I : Iniciar cámara
+activate I
+I -> C : Solicitar permiso y cargar modelo
+C --> I : Pista autorizada o error
+deactivate I
+end
+loop Cámara activa
+I -> C : Analizar fotograma reducido
+C --> I : Clases, recuadros y confianza
+end
+opt OCR habilitado y vehículo en la guía
+loop Hasta tres recortes
+I -> D : POST JPEG
+activate D
+D -> D : Permiso, límite y validación
+D -> N : Leer placa visible
+N --> D : Texto candidato o nulo
+D --> I : Lectura o error
+deactivate D
+end
+alt Dos lecturas consecutivas coinciden
+I -> D : POST placa confirmada
+D -> B : Buscar en condominio activo
+B --> D : Coincidencia o vacío
+D --> I : Resultado del registro
+else Lectura incierta
+I -> I : No consultar registro
+end
+end
+A -> I : Detener o salir
+I -> C : Liberar pistas y detener inferencia
+I -> I : Cancelar solicitudes
+@enduml

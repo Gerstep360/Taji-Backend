@@ -21,7 +21,7 @@ from django.core.wsgi import get_wsgi_application
 from django.test.utils import setup_databases, teardown_databases
 from django.utils import timezone
 from accounts.models import Person, Role, User
-from condominiums.models import Condominium, Sector
+from condominiums.models import Condominium, Sector, Resident
 from incidents.models import Incident, IncidentCategory, PriorityLevel
 from maintenance.models import Asset, AssetType, MaintenancePlan, WorkOrder
 from tenancy.models import TenantMembership
@@ -42,6 +42,8 @@ try:
         person = Person.objects.create(first_name='CU24', last_name=slug, document_number='LIVE-' + slug)
         user = User.objects.create_user(email=slug + '@cu24.test', password='OnlyLocal-CU24-123!', role=role, person=person)
         TenantMembership.objects.create(user=user, condominium=own, role=role, is_default=True)
+        if slug == 'residente':
+            Resident.objects.create(person=person, condominium=own)
     kind = AssetType.objects.create(code='CU24-LIVE', name='Bomba de prueba')
     for condo, prefix in [(own, '11111111'), (other, '22222222')]:
         sector = Sector.objects.create(condominium=condo, code='S-' + prefix, name='Sala de bombas')

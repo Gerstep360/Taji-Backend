@@ -11,7 +11,7 @@ from rest_framework.throttling import UserRateThrottle
 from tenancy.context import TenantContext
 
 from .catalog import SOURCES
-from .exports import export_csv, export_html, export_xlsx
+from .exports import export_csv, export_html, export_xlsx, export_pdf
 from .serializers import (
     ReportRequestSerializer,
     VoiceNarrateRequestSerializer,
@@ -36,7 +36,7 @@ class CanAccessReports(BasePermission):
         if not role or not role.is_active:
             return False
         slug = (role.slug or "").lower()
-        return slug in ("admin", "administrador", "superadmin", "seguridad", "operador")
+        return slug in ("admin", "administrador", "superadmin", "seguridad", "operador") or role.permissions.filter(code="view_reports", is_active=True).exists()
 
 
 class Cu31BaseView(APIView):
@@ -87,7 +87,7 @@ class Cu31CatalogView(Cu31BaseView):
             "name": "Generación de Reportes y Consultas Asistidas por Voz",
             "condominium": {"id": tenant.pk, "name": tenant.name},
             "export_limit": EXPORT_LIMIT,
-            "formats": ["xlsx", "html", "csv"],
+            "formats": ["pdf", "xlsx", "html", "csv"],
             "voice_enabled": True,
             "voice_suggestions": voice_suggestions,
             "sources": [
@@ -168,7 +168,12 @@ class Cu31ExportView(Cu31BaseView):
             f"Filtros: {'; '.join(filters_desc) or 'Sin filtros adicionales'}."
         )
 
-        if fmt == "xlsx":
+        if fmt == "pdf":
+            if len(rows) > 1000:
+                raise ValidationError("PDF admite hasta 1000 registros. Aplica más filtros o utiliza Excel/CSV.")
+            response = export_pdf(title, columns, rows, tenant, description)
+            extension = "pdf"
+        elif fmt == "xlsx":
             response = export_xlsx(title, columns, rows, tenant, description)
             extension = "xlsx"
         elif fmt == "csv":

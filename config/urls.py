@@ -29,6 +29,7 @@ def api_not_found(_request, _path):
 
 
 urlpatterns = [
+    path("api/v1/security/cu32/", include("paquetes.paquete2_seguridad_accesos.cu32_webcam.urls")),
     path("api/v1/assets/scan/", include("paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.urls")),
     path("api/v1/assets/", include("paquetes.paquete4_activos_mantenimiento.cu23_gestionar_activos.urls")),
     path("api/v1/maintenance/", include("paquetes.paquete4_activos_mantenimiento.cu25_mantenimiento_ordenes.urls")),
@@ -47,6 +48,7 @@ urlpatterns = [
     path("api/v1/roles/", include("paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.urls")),
     path("api/v1/saas/", include("tenancy.urls")),
     path("api/v1/reports/", include("reports.urls")),
+    path("api/v1/community/", include("community.urls")),
     path("api/v1/audit/", include("auditlog.urls")),
     path("api/v1/", include("condominiums.urls")),
     path("api/v1/", include("paquetes.paquete2_seguridad_accesos.cu08_visitantes.urls")),

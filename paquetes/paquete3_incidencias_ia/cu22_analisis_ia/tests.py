@@ -46,16 +46,65 @@ class AIProviderTests(SimpleTestCase):
             with self.subTest(content=content), self.assertRaises(ProviderFailure):
                 self.run_provider(httpx.Response(200, json={'choices':[{'finish_reason':finish,'message':{'content':content}}]}))
 
+    def test_transient_timeout_is_recovered_once(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise httpx.ReadTimeout('temporary stall')
+            return httpx.Response(200, json={'choices':[{'finish_reason':'stop','message':{'content':'{}'}}]})
+        result, _ = analyze({}, [], [], transport=httpx.MockTransport(handler))
+        self.assertEqual(result, {})
+        self.assertEqual(len(calls), 2)
+
+    def test_exhausted_total_budget_does_not_start_a_second_request(self):
+        with patch('paquetes.paquete3_incidencias_ia.cu22_analisis_ia.provider.monotonic', side_effect=[0, 0, 21]), \
+             patch('paquetes.paquete3_incidencias_ia.cu22_analisis_ia.provider._analyze_once', side_effect=ProviderFailure('timeout')) as attempt:
+            with self.assertRaises(ProviderFailure):
+                analyze({}, [], [])
+        self.assertEqual(attempt.call_count, 1)
+
+    def test_authentication_failure_is_never_retried(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(401)
+        with self.assertRaises(ProviderFailure):
+            analyze({}, [], [], transport=httpx.MockTransport(handler))
+        self.assertEqual(len(calls), 1)
+
+    def test_worker_reuses_connection_and_can_reset_a_stalled_client(self):
+        from .provider import provider_client, reset_connection
+        reset_connection()
+        with patch('paquetes.paquete3_incidencias_ia.cu22_analisis_ia.provider.httpx.Client') as factory:
+            with provider_client(None) as first:
+                pass
+            with provider_client(None) as second:
+                self.assertIs(first, second)
+            self.assertEqual(factory.call_count, 1)
+            reset_connection()
+            first.close.assert_called_once()
+
     def test_request_is_bounded_private_and_disables_thinking(self):
         def handler(request):
             import json
             body = json.loads(request.content)
             self.assertEqual(body['chat_template_kwargs'], {'enable_thinking':False})
             self.assertLessEqual(body['max_tokens'], 3000)
+            self.assertEqual(body['top_k'], 1)
+            self.assertLessEqual(body['max_tokens'], 1200)
             self.assertNotIn('vecino@example.com', request.content.decode())
             return httpx.Response(200,json={'choices':[{'finish_reason':'stop','message':{'content':'{}'}}]})
         result, _ = analyze({'description':'vecino@example.com, teléfono 76543210'}, [], [], transport=httpx.MockTransport(handler))
         self.assertEqual(result,{})
+
+    def test_empty_entity_placeholder_is_omitted_but_original_json_is_preserved(self):
+        import json
+        original = json.dumps({'entities': [{'text': '  ', 'entity_type': 'PERSON', 'context': 'present'},
+                                          {'text': 'tablero', 'entity_type': 'ASSET', 'context': 'present'}]})
+        result, raw = self.run_provider(httpx.Response(200, json={'choices':[{'finish_reason':'stop','message':{'content':original}}]}))
+        self.assertEqual([e['text'] for e in result['entities']], ['tablero'])
+        self.assertEqual(raw, original)
 
     def test_oversized_provider_response_is_rejected(self):
         with self.assertRaises(ProviderFailure) as raised:

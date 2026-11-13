@@ -62,8 +62,10 @@ def record_audit_event(
         ip = get_client_ip(request)
         ua = get_user_agent(request)
         req_id = get_request_id(request)
+        from tenancy.context import TenantContext
 
         return AuditEvent.objects.create(
+            condominium_id=TenantContext.get_current_tenant_id(),
             actor_user=actor,
             action_code=action_code[:80],
             resource_type=resource_type[:80],
