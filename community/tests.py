@@ -6,7 +6,8 @@ from condominiums.models import Condominium, Resident, Sector
 from tenancy.models import TenantMembership
 from tenancy.context import TenantContext
 from notifications.models import Announcement
-from .models import CommonArea, Reservation, Assembly, Agreement, CommonAreaBlock
+from .models import CommonArea, Reservation, Assembly, Agreement, CommonAreaBlock, CommonAreaSchedule
+from maintenance.models import WorkOrder
 
 
 class MobileCommunityTests(APITestCase):
@@ -143,3 +144,75 @@ class MobileCommunityTests(APITestCase):
 
     def test_invalid_area_id_is_not_a_server_error(self):
         self.assertEqual(self.reserve(common_area='invalid').status_code,400)
+    def schedule_payload(self,**extra):
+        return {'common_area':self.area.pk,'weekday':0,'opens_at':'08:00','closes_at':'12:00',**extra}
+    def block_payload(self,**extra):
+        start=timezone.now()+timedelta(days=10)
+        return {'common_area':self.area.pk,'blocked_from':start.isoformat(),'blocked_until':(start+timedelta(days=2)).isoformat(),'reason':'Reparación de filtraciones',**extra}
+    def test_admin_can_create_list_update_and_deactivate_area_schedule(self):
+        response=self.client.post('/api/v1/community/area-schedules/',self.schedule_payload(),format='json')
+        self.assertEqual(response.status_code,201,response.data)
+        schedule_id=response.data['id']
+        response=self.client.get(f'/api/v1/community/area-schedules/?common_area={self.area.pk}')
+        self.assertEqual([r['id'] for r in response.data['results']],[schedule_id])
+        patch=self.client.patch(f'/api/v1/community/area-schedules/{schedule_id}/',{'closes_at':'13:00:00'},format='json')
+        self.assertEqual(patch.status_code,200,patch.data)
+        self.assertEqual(patch.data['closes_at'],'13:00:00')
+        self.assertEqual(self.client.delete(f'/api/v1/community/area-schedules/{schedule_id}/').status_code,204)
+        self.assertFalse(CommonAreaSchedule.objects.get(pk=schedule_id).is_active)
+    def test_schedule_rejects_invalid_time_range_weekday_and_duplicates(self):
+        for payload in [self.schedule_payload(closes_at='07:00'),self.schedule_payload(weekday=7),self.schedule_payload(opens_at='12:00',closes_at='12:00')]:
+            self.assertEqual(self.client.post('/api/v1/community/area-schedules/',payload,format='json').status_code,400)
+        self.assertEqual(self.client.post('/api/v1/community/area-schedules/',self.schedule_payload(),format='json').status_code,201)
+        self.assertEqual(self.client.post('/api/v1/community/area-schedules/',self.schedule_payload(),format='json').status_code,400)
+    def test_schedule_rejects_foreign_area_and_non_manager_can_only_read(self):
+        self.assertEqual(self.client.post('/api/v1/community/area-schedules/',self.schedule_payload(common_area=self.foreign_area.pk),format='json').status_code,400)
+        self.client.force_authenticate(user=self.neighbor)
+        self.assertEqual(self.client.post('/api/v1/community/area-schedules/',self.schedule_payload(),format='json').status_code,403)
+        response=self.client.get('/api/v1/community/area-schedules/')
+        self.assertEqual(response.status_code,200)
+    def test_schedule_list_is_tenant_scoped_and_rejects_invalid_filter(self):
+        CommonAreaSchedule.objects.create(common_area=self.foreign_area,weekday=0,opens_at='08:00',closes_at='12:00')
+        response=self.client.get('/api/v1/community/area-schedules/')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual([r['common_area'] for r in response.data['results']],[])
+        self.assertEqual(self.client.get('/api/v1/community/area-schedules/?common_area=abc').status_code,400)
+    def test_admin_can_create_list_update_and_delete_area_block(self):
+        own_order=WorkOrder.objects.create(condominium=self.tenant,public_code='WO-CU26-OWN',work_type='CORRECTIVE',title='Fuga')
+        response=self.client.post('/api/v1/community/area-blocks/',self.block_payload(work_order=own_order.pk),format='json')
+        self.assertEqual(response.status_code,201,response.data)
+        block_id=response.data['id']
+        self.assertEqual(response.data['created_by_user'],self.admin.pk)
+        response=self.client.get(f'/api/v1/community/area-blocks/?common_area={self.area.pk}')
+        self.assertEqual([r['id'] for r in response.data['results']],[block_id])
+        patch=self.client.patch(f'/api/v1/community/area-blocks/{block_id}/',{'reason':'Pintura y pulido'},format='json')
+        self.assertEqual(patch.status_code,200,patch.data)
+        self.assertEqual(self.client.delete(f'/api/v1/community/area-blocks/{block_id}/').status_code,204)
+        self.assertFalse(CommonAreaBlock.objects.filter(pk=block_id).exists())
+    def test_block_rejects_invalid_range_empty_reason_and_foreign_work_order(self):
+        start=timezone.now()+timedelta(days=10)
+        invalid_range=self.block_payload(blocked_from=start.isoformat(),blocked_until=(start-timedelta(days=1)).isoformat())
+        self.assertEqual(self.client.post('/api/v1/community/area-blocks/',invalid_range,format='json').status_code,400)
+        self.assertEqual(self.client.post('/api/v1/community/area-blocks/',self.block_payload(reason='   '),format='json').status_code,400)
+        foreign_order=WorkOrder.objects.create(condominium=self.other,public_code='WO-CU26-FOREIGN',work_type='CORRECTIVE',title='Ajena')
+        self.assertEqual(self.client.post('/api/v1/community/area-blocks/',self.block_payload(work_order=foreign_order.pk),format='json').status_code,400)
+    def test_block_list_is_tenant_scoped_and_rejects_invalid_filter(self):
+        start=timezone.now()+timedelta(days=10)
+        CommonAreaBlock.objects.create(common_area=self.foreign_area,blocked_from=start,blocked_until=start+timedelta(days=1),reason='Ajena')
+        response=self.client.get('/api/v1/community/area-blocks/')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual([r['reason'] for r in response.data['results']],[])
+        self.assertEqual(self.client.get('/api/v1/community/area-blocks/?common_area=abc').status_code,400)
+    def test_non_manager_cannot_manage_blocks(self):
+        self.client.force_authenticate(user=self.neighbor)
+        self.assertEqual(self.client.post('/api/v1/community/area-blocks/',self.block_payload(),format='json').status_code,403)
+        response=self.client.get('/api/v1/community/area-blocks/')
+        self.assertEqual(response.status_code,200)
+    def test_duplicate_area_name_rejected_within_tenant(self):
+        self.assertEqual(self.client.post('/api/v1/community/areas/',{'name':'Salón móvil A'},format='json').status_code,400)
+        self.assertEqual(self.client.post('/api/v1/community/areas/',{'name':'Salón exclusivo'},format='json').status_code,201)
+    def test_block_creation_sets_audit_event(self):
+        from auditlog.models import AuditEvent
+        response=self.client.post('/api/v1/community/area-blocks/',self.block_payload(),format='json')
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertTrue(AuditEvent.objects.filter(action_code='COMMUNITY_CREATED',resource_type='CommonAreaBlock',resource_id=str(response.data['id'])).exists())

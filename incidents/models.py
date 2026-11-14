@@ -192,7 +192,9 @@ class Incident(models.Model):
         return max(0, int(delta.total_seconds() / 60))
 
     def save(self, *args, **kwargs):
-        if not self.public_code:
+        if self.public_code:
+            self.public_code = str(self.public_code).strip()
+        else:
             import uuid
             today_str = timezone.now().strftime("%Y%m%d")
             random_part = uuid.uuid4().hex[:6].upper()

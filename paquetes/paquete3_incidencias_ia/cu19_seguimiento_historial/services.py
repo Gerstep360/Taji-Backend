@@ -64,6 +64,18 @@ VALID_TRANSITIONS = {
 
 
 class IncidentTrackingService:
+    @staticmethod
+    def has_platform_scope(user: User) -> bool:
+        """Verdadero para administradores de plataforma (superusuario o staff).
+
+        Los administradores de plataforma consultan el tablero completo de
+        incidencias: su búsqueda global no debe quedar atada al condominio
+        predeterminado de su membresía.
+        """
+        if not (user and user.is_authenticated):
+            return False
+        return bool(user.is_superuser or user.is_staff)
+
     @classmethod
     def get_user_condominium_id(cls, user: User) -> Optional[int]:
         tenant = TenantContext.get_current_tenant()
@@ -118,11 +130,13 @@ class IncidentTrackingService:
             "unit",
         ).prefetch_related("status_history__changed_by_user__person").order_by("-created_at", "-id")
 
-        tenant_id = cls.get_user_condominium_id(user)
-        if tenant_id:
-            queryset = queryset.filter(condominium_id=tenant_id)
-        elif not (user.is_superuser and TenantContext.is_global()):
-            return queryset.none()
+        if not cls.has_platform_scope(user):
+            # El resto de actores queda acotado a su condominio.
+            tenant_id = cls.get_user_condominium_id(user)
+            if tenant_id:
+                queryset = queryset.filter(condominium_id=tenant_id)
+            elif not (user.is_superuser and TenantContext.is_global()):
+                return queryset.none()
 
         # Control de alcance por rol
         scope = cls.resolve_user_scope(user, filters.get("scope"))
@@ -134,7 +148,8 @@ class IncidentTrackingService:
                 q_filter |= Q(reporter_resident__person=person)
             queryset = queryset.filter(q_filter)
         elif scope == "ASIGNADAS" and person:
-            staff_obj = Staff.objects.filter(person=person, status=Staff.Status.ACTIVE).first()
+            staff_source = Staff.objects.all_tenants() if cls.has_platform_scope(user) else Staff.objects
+            staff_obj = staff_source.filter(person=person, status=Staff.Status.ACTIVE).first()
             if staff_obj:
                 queryset = queryset.filter(current_assignee_staff=staff_obj)
             else:
@@ -199,12 +214,8 @@ class IncidentTrackingService:
                 queryset = queryset.filter(**{lookup: filters[key]})
 
         search_q = filters.get("search")
-        if search_q:
-            queryset = queryset.filter(
-                Q(title__icontains=search_q)
-                | Q(description__icontains=search_q)
-                | Q(public_code__icontains=search_q)
-            )
+        if search_q and str(search_q).strip():
+            queryset = queryset.filter(cls.build_search_query(str(search_q).strip()))
 
         date_from = filters.get("date_from")
         if date_from:
@@ -216,10 +227,43 @@ class IncidentTrackingService:
 
         return queryset
 
+    @staticmethod
+    def build_search_query(term: str) -> Q:
+        """Construye el filtro de búsqueda global de incidencias.
+
+        Cada palabra escrita debe aparecer en el código público, el título o la
+        descripción (AND entre palabras, OR entre campos). Además se acepta el
+        código público completo y el correlativo numérico de la incidencia.
+        """
+        tokens = [part for part in term.split() if part]
+        if not tokens:
+            return Q(pk__in=[])
+
+        query = Q()
+        for token in tokens:
+            query &= (
+                Q(public_code__icontains=token)
+                | Q(title__icontains=token)
+                | Q(description__icontains=token)
+            )
+
+        exact = Q(public_code__iexact=term)
+        if term.isdigit():
+            exact |= Q(pk=int(term))
+        return query | exact
+
     @classmethod
-    def get_incident_detail(cls, public_code: str, user: User) -> Incident:
-        try:
-            incident = Incident.objects.select_related(
+    def get_incident_detail(cls, identifier: Any, user: User) -> Incident:
+        sid = str(identifier or "").strip()
+        if not sid:
+            raise NotFound("La incidencia solicitada no existe.")
+
+        query = Q(public_code__iexact=sid)
+        if sid.isdigit():
+            query |= Q(pk=int(sid))
+
+        incident = (
+            Incident.objects.select_related(
                 "reporter_user__person",
                 "reporter_resident__person",
                 "category",
@@ -231,8 +275,9 @@ class IncidentTrackingService:
                 "status_history__changed_by_user__person",
                 "comments__author_user__person",
                 "attachments__uploaded_by_user__person",
-            ).get(public_code=public_code)
-        except Incident.DoesNotExist:
+            ).filter(query).first()
+        )
+        if not incident:
             raise NotFound("La incidencia solicitada no existe.")
 
         if not cls.list_incidents(user, {}).filter(pk=incident.pk).exists():

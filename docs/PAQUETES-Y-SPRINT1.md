@@ -61,6 +61,7 @@ elimina ni transforma registros.
 | T004–T007 | `Person`, usuario personalizado, roles/permisos, fixtures, comando `seed_rbac` y Django Admin |
 | T008–T009 | Login, refresh, logout/blacklist, cookies/Bearer, intentos fallidos y bloqueo; implementación trasladada a CU01 |
 | T010–T016 | CU02–CU07 integrados en el Paquete 1 |
+| T048 | CU26: CRUD de áreas comunes (`community/areas/`), horarios (`community/area-schedules/`) y bloqueos (`community/area-blocks/`) con aislamiento por tenant; baja lógica de áreas y horarios; el nombre del área es único por condominio (`uq_common_area_condominium_name`) |
 | T076–T077 / T101 | Trabajo de frontend y móvil, fuera de este repositorio; no verificable desde este backend |
 | T138–T144 | Arquitectura y ceremonias Scrum: su realización no puede inferirse del código |
 

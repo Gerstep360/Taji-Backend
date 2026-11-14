@@ -8,14 +8,16 @@ Todos requieren JWT y condominio activo. Prefijo `/api/v1/`.
 |---|---|---|
 | Datos del condominio actual | `community/condominium/` | PATCH, `manage_settings`; no crea ni elimina condominios |
 | Áreas comunes | `community/areas/` | `manage_reservations` |
+| Horarios de áreas | `community/area-schedules/` | `manage_reservations`; `DELETE` desactiva (`is_active=false`) |
+| Bloqueos de áreas | `community/area-blocks/` | `manage_reservations`; `DELETE` levanta el bloqueo |
 | Reservas | `community/reservations/` | `reserve_areas` para las propias; `manage_reservations` para gestión |
 | Comunicados | `community/announcements/` | `manage_announcements` |
 | Asambleas y acuerdos | `community/assemblies/`, `community/agreements/` | `manage_settings` |
 | Bitácora móvil | `community/audit/` | Solo lectura, `manage_roles` o `view_audit_log` |
 
-Las listas usan la paginación DRF del proyecto y `search`. Los lectores de comunicados ven únicamente publicaciones vigentes para su audiencia. Un residente solo puede consultar y cancelar sus propias reservas antes del inicio; la API asigna su perfil automáticamente. No puede autoaprobarse. Se validan horarios, bloqueos, estados y cruces; el bloqueo transaccional del área complementa la restricción de exclusión de PostgreSQL.
+Las listas usan la paginación DRF del proyecto y `search`. `area-schedules/` y `area-blocks/` aceptan el filtro `?common_area=<id>` para limitar el listado a un área; un horario describe la disponibilidad semanal (0 = lunes … 6 = domingo) y un bloqueo impide reservas durante una ventana. Los lectores de comunicados ven únicamente publicaciones vigentes para su audiencia. Un residente solo puede consultar y cancelar sus propias reservas antes del inicio; la API asigna su perfil automáticamente. No puede autoaprobarse. Se validan horarios, bloqueos, estados y cruces; el bloqueo transaccional del área complementa la restricción de exclusión de PostgreSQL.
 
-Las bajas de áreas/comunicados/asambleas/acuerdos son por estado, conservando historial. Las reservas se cancelan con PATCH. Los eventos nuevos incluyen condominio; el endpoint móvil excluye los eventos antiguos sin tenant identificable, sin alterar la bitácora append-only. El endpoint global legado de auditoría no fue sustituido.
+Las bajas de áreas/comunicados/asambleas/acuerdos son por estado, conservando historial. Los horarios se desactivan (`is_active=false`) y los bloqueos se eliminan al levantarse; ambas bajas quedan en la bitácora. Las reservas se cancelan con PATCH. Los eventos nuevos incluyen condominio; el endpoint móvil excluye los eventos antiguos sin tenant identificable, sin alterar la bitácora append-only. El endpoint global legado de auditoría no fue sustituido.
 
 ## PDF
 
