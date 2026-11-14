@@ -263,3 +263,5 @@ INCIDENT_EVIDENCE_MAX_BYTES = env.int("INCIDENT_EVIDENCE_MAX_BYTES", default=5 *
 
 from .nvidia import configuration as nvidia_configuration
 NVIDIA = nvidia_configuration(BASE_DIR)
+from .visual_vision import configuration as visual_vision_configuration
+TAJI_VISION = visual_vision_configuration(BASE_DIR)

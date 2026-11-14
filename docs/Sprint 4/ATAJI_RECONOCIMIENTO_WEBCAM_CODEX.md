@@ -1,5 +1,7 @@
 # TAJI — Módulo de reconocimiento inteligente por webcam
 
+Esta es la especificación original del reconocimiento local y OCR. El incremento de visión contextual se integra en **Incidencias e IA → Reconocimiento por cámara** y se documenta en la [guía actual de CU32](../CU32_VISION_CONTEXTUAL.md).
+
 ## Instrucciones para Codex
 
 Implementa **dentro del proyecto TAJI existente** un módulo de demostración universitaria de reconocimiento visual con **Angular en el frontend y Django en el backend**.

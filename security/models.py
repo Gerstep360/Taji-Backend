@@ -5,6 +5,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from tenancy.managers import TenantAwareManager
+from .visual_models import VisualObservation, VisualQuota, VisualSession  # noqa: F401
 
 
 class DemoVehicle(models.Model):

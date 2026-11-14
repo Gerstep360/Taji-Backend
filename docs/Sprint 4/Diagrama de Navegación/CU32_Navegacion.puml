@@ -10,13 +10,17 @@ skinparam state {
  BorderColor #40566A
  RoundCorner 12
 }
-state "Menú de seguridad" as M
+state "Incidencias e IA" as M
 state "Visor apagado" as A
 state "Permiso de cámara" as P
 state "Cargando IA" as C
 state "Visor en vivo y eventos" as V
 state "Lectura de placa" as L
 state "Error recuperable" as E
+state "Observaciones de cámara" as O
+state "Análisis activo" as N
+state "Línea temporal / detalle" as H
+state "Revisión humana" as R
 [*] --> M
 M --> A : Permiso validate_visits
 A --> P : Iniciar cámara
@@ -32,5 +36,15 @@ E --> P : Reintentar
 A --> M : Salir
 V --> M : Salir y liberar recursos
 L --> M : Salir y cancelar lectura
+A --> O : Abrir historial sin encender
+V --> O : Abrir observaciones
+O --> N : Consentimiento, sector y webcam activa
+N --> O : Pausar o fallo del proveedor
+O --> H : Filtrar o seleccionar observación
+H --> R : Permiso de revisión
+R --> H : Guardar decisión auditada
+H --> O : Cerrar detalle
+O --> M : Salir y cerrar sesión
+N --> A : Detener y cancelar pendientes
 M --> [*]
 @enduml

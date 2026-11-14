@@ -14,8 +14,8 @@ from tenancy.models import TenantMembership
 
 
 class WebcamTests(APITestCase):
-    lookup = "/api/v1/security/cu32/plate/lookup/"
-    read = "/api/v1/security/cu32/plate/read/"
+    lookup = "/api/v1/paquete3/cu32/plate/lookup/"
+    read = "/api/v1/paquete3/cu32/plate/read/"
 
     @classmethod
     def setUpTestData(cls):
@@ -63,7 +63,7 @@ class WebcamTests(APITestCase):
         Image.new("RGB", (200, 80), "white").save(buffer, "JPEG")
         return SimpleUploadedFile("crop.jpg", buffer.getvalue(), content_type="image/jpeg")
 
-    @patch("paquetes.paquete2_seguridad_accesos.cu32_webcam.views.read_plate", return_value=None)
+    @patch(__package__ + ".views.read_plate", return_value=None)
     def test_unreadable_does_not_invent_a_plate(self, reader):
         result = self.client.post(self.read, {"image": self.crop()}, format="multipart")
         self.assertEqual(result.status_code, 200, result.data)
@@ -74,8 +74,14 @@ class WebcamTests(APITestCase):
     def test_disabled_provider_returns_controlled_error(self):
         self.assertEqual(self.client.post(self.read, {"image": self.crop()}, format="multipart").status_code, 503)
 
-    @patch("paquetes.paquete2_seguridad_accesos.cu32_webcam.views.read_plate", return_value="AB01")
+    @patch(__package__ + ".views.read_plate", return_value="AB01")
     def test_ocr_is_throttled(self, reader):
         codes = [self.client.post(self.read, {"image": self.crop()}, format="multipart").status_code for _ in range(7)]
         self.assertEqual(codes, [200] * 6 + [429])
         self.assertEqual(reader.call_count, 6)
+
+    def test_previous_ocr_urls_keep_auth_and_catalogue(self):
+        old = '/api/v1/security/cu32/plate/lookup/'
+        self.assertEqual(self.client.post(old, {'plate': 'AB01'}).data, self.client.post(self.lookup, {'plate': 'AB01'}).data)
+        self.client.force_authenticate(self.residente)
+        self.assertEqual(self.client.post(old, {'plate': 'AB01'}).status_code, 403)
