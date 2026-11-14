@@ -19,7 +19,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from config.api import TajiPageNumberPagination
 from condominiums.models import Resident, ResidentUnit, Unit
 from .models import LoginAttempt, Person, Role, SystemPermission, User
-from .rbac import ROLE_DEFINITIONS
+from .rbac import ROLE_DEFINITIONS, PERMISSIONS
 from .tokens import check_activation_token, token_generator
 
 
@@ -39,7 +39,7 @@ class AuthApiTests(APITestCase):
 
     def test_rbac_catalog_is_seeded(self):
         self.assertEqual(Role.objects.count(), 7)
-        self.assertEqual(SystemPermission.objects.count(), 33)
+        self.assertEqual(SystemPermission.objects.count(), len(PERMISSIONS))
         self.assertTrue(self.role.is_public)
         self.assertFalse(Role.objects.get(slug="administrador").is_public)
 
@@ -459,7 +459,7 @@ class AuthApiTests(APITestCase):
     def test_initial_roles_fixture_matches_the_merged_rbac_catalog(self):
         call_command("loaddata", "initial_roles", verbosity=0)
         self.assertEqual(Role.objects.count(), len(ROLE_DEFINITIONS))
-        self.assertEqual(SystemPermission.objects.count(), 33)
+        self.assertEqual(SystemPermission.objects.count(), len(PERMISSIONS))
         for slug, definition in ROLE_DEFINITIONS.items():
             role = Role.objects.get(slug=slug)
             self.assertEqual(role.name, definition["name"])
@@ -472,6 +472,18 @@ class AuthApiTests(APITestCase):
         self.assertTrue(SystemPermission.objects.filter(code="manage_roles").exists())
         admin_role = Role.objects.get(slug="administrador")
         self.assertIn("manage_roles", admin_role.permissions.values_list("code", flat=True))
+
+    def test_roles_fixture_is_idempotent_and_keeps_existing_primary_keys(self):
+        before = dict(SystemPermission.objects.values_list("code", "pk"))
+        role_id = self.user.role_id
+        extra = SystemPermission.objects.create(code="custom-integration", name="Permiso personalizado")
+        call_command("loaddata", "initial_roles", verbosity=0)
+        call_command("loaddata", "initial_roles", verbosity=0)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.role_id, role_id)
+        self.assertTrue(SystemPermission.objects.filter(pk=extra.pk, code=extra.code).exists())
+        for code, pk in before.items():
+            self.assertEqual(SystemPermission.objects.get(code=code).pk, pk)
 
     def test_admin_keeps_all_merged_models_and_secure_user_admin(self):
         for model in (Person, Role, SystemPermission, User, LoginAttempt):

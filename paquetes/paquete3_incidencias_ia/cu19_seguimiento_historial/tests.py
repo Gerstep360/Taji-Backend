@@ -108,8 +108,9 @@ class IncidentTrackingTestCase(APITestCase):
 
     def _make_incident(self, reporter=None, priority=None, status=None, due_at=None, title=None):
         return Incident.objects.create(
+            condominium=self.condo,
             reporter_user=reporter or self.resident_user,
-            reporter_resident=getattr(self, "resident_obj", None),
+            reporter_resident=self.resident_obj if not reporter or reporter == self.resident_user else None,
             category=self.category,
             priority=priority or self.priority,
             current_assignee_staff=self.staff_obj,
@@ -195,6 +196,7 @@ class IncidentBoardFilterTests(IncidentTrackingTestCase):
         self.inc_pending = self._make_incident(status=Incident.Status.REPORTED, due_at=now + timedelta(hours=5))
         self.inc_overdue = self._make_incident(status=Incident.Status.IN_PROGRESS, due_at=now - timedelta(hours=2))
         self.inc_resolved = self._make_incident(status=Incident.Status.RESOLVED)
+        self.assertTrue(self.inc_overdue.is_overdue, repr((self.inc_overdue.status, self.inc_overdue.due_at)))
 
     def test_unauthenticated_returns_401(self):
         response = self.client.get(LIST_URL)
@@ -204,7 +206,7 @@ class IncidentBoardFilterTests(IncidentTrackingTestCase):
         self.auth(self.admin_user)
         response = self.client.get(LIST_URL)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        count = response.data.get("count", len(response.data))
+        count = response.data["pagination"]["total_items"]
         self.assertGreaterEqual(count, 3)
 
     def test_filter_by_overdue(self):
@@ -604,10 +606,10 @@ class IncidentDetailViewTests(IncidentTrackingTestCase):
         ):
             self.assertIn(field, data, f"Campo '{field}' faltante en el DTO de detalle.")
 
-    def test_not_found_incident_returns_400(self):
+    def test_not_found_incident_returns_404(self):
         self.auth(self.admin_user)
         response = self.client.get(incident_url("INC-99999999-ZZZZZZ"))
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_resident_cannot_view_others_incident_detail(self):
         """Residente no puede acceder al detalle de una incidencia que no es suya."""
@@ -624,7 +626,7 @@ class IncidentDetailViewTests(IncidentTrackingTestCase):
         foreign_incident = self._make_incident(reporter=other_user)
         self.auth(self.resident_user)
         response = self.client.get(incident_url(foreign_incident.public_code))
-        self.assertIn(response.status_code, (status.HTTP_403_FORBIDDEN, status.HTTP_400_BAD_REQUEST))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_directiva_can_see_details(self):
         self.auth(self.directiva_user)

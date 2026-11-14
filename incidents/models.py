@@ -69,8 +69,8 @@ class Incident(models.Model):
         CANCELLED = "CANCELLED", "Cancelada"
 
     public_code = models.CharField(max_length=30, unique=True)
-    # Condominio (tenant) dueño de la incidencia. Los registros creados en el Admin
-    # antes de CU18 pueden quedar con este campo nulo.
+    # Condominio (tenant) dueño de la incidencia y correlativo interno usado para
+    # generar `public_code`. Son nulos solo en filas anteriores a CU18.
     condominium = models.ForeignKey(
         "condominiums.Condominium",
         on_delete=models.PROTECT,
@@ -78,6 +78,7 @@ class Incident(models.Model):
         null=True,
         blank=True,
     )
+    condominium_sequence = models.PositiveIntegerField(null=True, blank=True, editable=False)
     reporter_user = models.ForeignKey(
         "accounts.User",
         on_delete=models.SET_NULL,
@@ -137,7 +138,14 @@ class Incident(models.Model):
 
     class Meta:
         db_table = "incident"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("condominium", "condominium_sequence"),
+                name="uq_incident_condo_sequence",
+            )
+        ]
         indexes = [
+            models.Index(fields=("condominium", "-created_at"), name="idx_inc_condo_time"),
             models.Index(
                 fields=("status", "priority", "-created_at"),
                 name="idx_inc_status_priority",
@@ -227,6 +235,15 @@ class IncidentAttachment(models.Model):
 
     def __str__(self):
         return f"{self.incident.public_code} - {self.get_file_type_display()}"
+
+
+class IncidentAIWorkerHeartbeat(models.Model):
+    """Disponibilidad del procesador compartida entre API y trabajador."""
+    worker_id = models.UUIDField(primary_key=True, editable=False)
+    last_seen = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = 'incident_ai_worker_heartbeat'
 
 
 class IncidentAssignment(models.Model):
@@ -340,6 +357,20 @@ class RiskRule(models.Model):
 
 
 class IncidentAIAnalysis(models.Model):
+    class ExecutionStatus(models.TextChoices):
+        QUEUED = 'QUEUED', 'En espera'
+        RUNNING = 'RUNNING', 'Analizando'
+        SUCCEEDED = 'SUCCEEDED', 'Analizado'
+        FAILED = 'FAILED', 'Revisión manual'
+
+    execution_status = models.CharField(max_length=16, choices=ExecutionStatus.choices, default=ExecutionStatus.SUCCEEDED)
+    requested_by = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_incident_analyses')
+    input_snapshot = models.JSONField(default=dict)
+    safety_findings = models.JSONField(default=list)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    duration_ms = models.PositiveIntegerField(null=True, blank=True)
+    error_code = models.CharField(max_length=40, blank=True)
     class ReviewStatus(models.TextChoices):
         PENDING = "PENDING", "Pendiente"
         ACCEPTED = "ACCEPTED", "Aceptado"
@@ -387,6 +418,7 @@ class IncidentAIAnalysis(models.Model):
     class Meta:
         db_table = "incident_ai_analysis"
         constraints = [
+            models.UniqueConstraint(fields=('incident',), condition=Q(execution_status__in=('QUEUED', 'RUNNING')), name='uq_incident_ai_active_job'),
             models.CheckConstraint(
                 condition=Q(confidence__isnull=True)
                 | Q(confidence__gte=0, confidence__lte=1),
@@ -394,7 +426,8 @@ class IncidentAIAnalysis(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=("incident", "-created_at"), name="idx_ai_incident_time")
+            models.Index(fields=("incident", "-created_at"), name="idx_ai_incident_time"),
+            models.Index(fields=('execution_status', 'created_at'), name='idx_ai_execution_queue'),
         ]
 
 
@@ -423,3 +456,17 @@ class IncidentAIEntity(models.Model):
         indexes = [
             models.Index(fields=("analysis",), name="idx_ai_entity_analysis")
         ]
+
+
+class IncidentAIReview(models.Model):
+    """Corrección separada: la predicción original nunca se reemplaza."""
+    analysis = models.OneToOneField(IncidentAIAnalysis, on_delete=models.PROTECT, related_name='human_review')
+    reviewer = models.ForeignKey('accounts.User', on_delete=models.SET_NULL, null=True)
+    category = models.ForeignKey(IncidentCategory, on_delete=models.PROTECT)
+    priority = models.ForeignKey(PriorityLevel, on_delete=models.PROTECT)
+    reason = models.TextField()
+    safety_override = models.BooleanField(default=False)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'incident_ai_review'

@@ -3,7 +3,7 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
-from .managers import UserManager
+from .managers import UserManager, RoleManager, SystemPermissionManager
 
 
 class Person(models.Model):
@@ -53,6 +53,11 @@ class Person(models.Model):
 
 
 class SystemPermission(models.Model):
+    objects = SystemPermissionManager()
+
+    def natural_key(self):
+        return (self.code,)
+
     code = models.SlugField(max_length=100, unique=True)
     name = models.CharField(max_length=120)
     description = models.CharField(max_length=240, blank=True)
@@ -70,6 +75,11 @@ class SystemPermission(models.Model):
 
 
 class Role(models.Model):
+    objects = RoleManager()
+
+    def natural_key(self):
+        return (self.slug,)
+
     slug = models.SlugField(max_length=80, unique=True)
     name = models.CharField(max_length=80, unique=True)
     description = models.CharField(max_length=240, blank=True)

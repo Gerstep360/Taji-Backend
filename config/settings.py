@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "tenancy.apps.TenancyConfig",
     "reports",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
+    "paquetes.paquete6_reportes_analitica.cu31_reportes.apps.Cu31ReportesConfig",
 ]
 
 MIDDLEWARE = [
@@ -259,3 +260,8 @@ MEDIA_URL = "/media/"
 # Límites de evidencias por incidencia: cantidad de archivos y tamaño por archivo.
 INCIDENT_EVIDENCE_MAX_FILES = env.int("INCIDENT_EVIDENCE_MAX_FILES", default=5)
 INCIDENT_EVIDENCE_MAX_BYTES = env.int("INCIDENT_EVIDENCE_MAX_BYTES", default=5 * 1024 * 1024)
+
+from .nvidia import configuration as nvidia_configuration
+NVIDIA = nvidia_configuration(BASE_DIR)
+from .visual_vision import configuration as visual_vision_configuration
+TAJI_VISION = visual_vision_configuration(BASE_DIR)

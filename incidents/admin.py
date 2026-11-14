@@ -110,3 +110,28 @@ class IncidentAttachmentAdmin(admin.ModelAdmin):
     list_display = ("incident", "file_type", "caption", "uploaded_by_user", "created_at")
     list_filter = ("file_type", "created_at")
     search_fields = ("incident__public_code", "caption")
+
+
+from .models import IncidentAIAnalysis, IncidentAIReview
+
+
+class ImmutableAIAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(IncidentAIAnalysis)
+class IncidentAIAnalysisAdmin(ImmutableAIAdmin):
+    list_display = ('incident', 'execution_status', 'review_status', 'model_name', 'duration_ms', 'created_at')
+    list_filter = ('execution_status', 'review_status')
+
+
+@admin.register(IncidentAIReview)
+class IncidentAIReviewAdmin(ImmutableAIAdmin):
+    list_display = ('analysis', 'reviewer', 'category', 'priority', 'created_at')

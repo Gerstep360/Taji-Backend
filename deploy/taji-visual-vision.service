@@ -1,0 +1,24 @@
+[Unit]
+Description=Taji CU32 visual observation worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taji
+Group=taji
+WorkingDirectory=/opt/taji/current
+EnvironmentFile=/etc/taji/backend.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings_production
+ExecStart=/opt/taji/current/.venv/bin/python manage.py run_visual_vision
+Restart=on-failure
+RestartSec=5
+MemoryMax=256M
+CPUQuota=35%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -18,6 +18,7 @@ class AuditEventManager(models.Manager.from_queryset(AuditEventQuerySet)):
 
 
 class AuditEvent(models.Model):
+    condominium = models.ForeignKey('condominiums.Condominium', on_delete=models.PROTECT, null=True, blank=True, related_name='audit_events')
     objects = AuditEventManager()
 
     actor_user = models.ForeignKey(

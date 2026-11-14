@@ -16,21 +16,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from incidents.models import Incident, IncidentAttachment, IncidentCategory, PriorityLevel
-from auditlog.services import record_audit_event
-from tenancy.context import TenantContext
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia import services as cu18_services
-from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.serializers import (
-    AssetOptionSerializer,
-    IncidentCategorySerializer,
-    IncidentCreateSerializer,
-    IncidentSerializer,
-    PriorityLevelSerializer,
-    SectorOptionSerializer,
-    UnitOptionSerializer,
-)
-from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.permissions import CanReportIncidents
+from incidents.models import Incident, IncidentAttachment
 from .permissions import CanAccessIncidentTracking
 from .serializers import (
     ChangeStatusRequestSerializer,
@@ -45,6 +31,16 @@ from .serializers import (
     SetTargetDateRequestSerializer,
 )
 from .services import IncidentTrackingService
+from drf_spectacular.types import OpenApiTypes
+from condominiums.models import Staff
+from .permissions import is_admin_user
+from paquetes.paquete3_incidencias_ia.cu21_ciclo_atencion.services import (
+    allowed_transitions, assign_incident, attention_alerts,
+)
+from paquetes.paquete3_incidencias_ia.cu21_ciclo_atencion.serializers import (
+    AssignmentRequestSerializer, AttentionAlertSerializer, AssigneeOptionSerializer,
+    TransitionOptionSerializer,
+)
 
 
 @extend_schema_view(
@@ -63,19 +59,83 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
     """Controlador REST para consulta, seguimiento e historial de incidencias."""
 
     permission_classes = [IsAuthenticated, CanAccessIncidentTracking]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
     lookup_field = "public_code"
     lookup_url_kwarg = "public_code"
     lookup_value_regex = r"[^/]+"
 
-    def get_permissions(self):
-        if self.action == "create":
-            return [IsAuthenticated(), CanReportIncidents()]
-        return [IsAuthenticated(), CanAccessIncidentTracking()]
+    @extend_schema(responses={(200, "application/octet-stream"): OpenApiTypes.BINARY})
+    @action(detail=True, methods=["get"], url_path=r"attachments/(?P<attachment_id>\d+)/download")
+    def download_attachment(self, request, public_code=None, attachment_id=None):
+        from django.core.files.storage import default_storage
+        from django.http import FileResponse, Http404
+        from pathlib import PurePosixPath
+        incident = self.get_object()
+        attachment = incident.attachments.filter(pk=attachment_id).first()
+        if not attachment or not default_storage.exists(attachment.file_path):
+            raise Http404("La evidencia no está disponible.")
+        response = FileResponse(default_storage.open(attachment.file_path, "rb"), as_attachment=True,
+                                filename=PurePosixPath(attachment.file_path).name)
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @extend_schema(responses={(200, 'image/jpeg'): OpenApiTypes.BINARY, (200, 'image/png'): OpenApiTypes.BINARY, (200, 'image/webp'): OpenApiTypes.BINARY})
+    @action(detail=True, methods=['get'], url_path=r'attachments/(?P<attachment_id>\d+)/preview')
+    def preview_attachment(self, request, public_code=None, attachment_id=None):
+        from pathlib import PurePosixPath
+        from django.core.files.storage import default_storage
+        from django.http import FileResponse, Http404
+        from PIL import Image
+        incident = self.get_object()
+        attachment = incident.attachments.filter(pk=attachment_id, file_type='IMAGE').first()
+        prefix = f'incidents/{incident.condominium_id}/{incident.pk}/'
+        if (not attachment or not attachment.file_path.startswith(prefix) or '..' in attachment.file_path.split('/')
+                or '\\' in attachment.file_path):
+            raise Http404('La imagen no está disponible.')
+        try:
+            with default_storage.open(attachment.file_path, 'rb') as source:
+                with Image.open(source) as image:
+                    mime = {'JPEG':'image/jpeg','PNG':'image/png','WEBP':'image/webp'}.get(image.format)
+                    if image.width * image.height > 20000000:
+                        raise Http404('La imagen supera el límite de dimensiones de vista previa.')
+            if not mime:
+                raise Http404('Formato de imagen no compatible.')
+            response = FileResponse(default_storage.open(attachment.file_path, 'rb'), as_attachment=False,
+                filename=PurePosixPath(attachment.file_path).name, content_type=mime)
+        except (OSError, ValueError, Image.DecompressionBombError):
+            raise Http404('La imagen no está disponible.') from None
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+    @extend_schema(responses=AttentionAlertSerializer(many=True), filters=False)
+    @action(detail=False, methods=["get"], pagination_class=None)
+    def alerts(self, request):
+        return Response(attention_alerts(request.user))
+
+    @extend_schema(responses=AssigneeOptionSerializer(many=True), filters=False)
+    @action(detail=False, methods=["get"], pagination_class=None)
+    def assignees(self, request):
+        if not is_admin_user(request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+        tenant_id = IncidentTrackingService.get_user_condominium_id(request.user)
+        rows = Staff.objects.filter(condominium_id=tenant_id, status="ACTIVE").select_related("person") if tenant_id else Staff.objects.none()
+        return Response([{"id": row.pk, "name": row.person.full_name} for row in rows])
+
+    @extend_schema(responses=TransitionOptionSerializer(many=True), filters=False)
+    @action(detail=True, methods=["get"])
+    def transitions(self, request, public_code=None):
+        return Response(allowed_transitions(self.get_object(), request.user))
+
+    @extend_schema(request=AssignmentRequestSerializer, responses=IncidentDetailSerializer)
+    @action(detail=True, methods=["post"])
+    def assign(self, request, public_code=None):
+        data = AssignmentRequestSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        incident = assign_incident(self.get_object(), request.user, request=request, **data.validated_data)
+        return Response(IncidentDetailSerializer(incident, context={"request": request}).data)
 
     def get_serializer_class(self):
-        if self.action == "create":
-            return IncidentCreateSerializer
         if self.action == "retrieve":
             return IncidentDetailSerializer
         if self.action == "change_status":
@@ -87,90 +147,6 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
         if self.action == "attachments" and self.request.method == "POST":
             return CreateAttachmentRequestSerializer
         return IncidentListSerializer
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.action == "create":
-            context["condominium"] = TenantContext.get_current_tenant()
-            from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.views import has_full_unit_scope
-            context["full_unit_scope"] = has_full_unit_scope(self.request)
-        return context
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        condominium = serializer.context["condominium"]
-        data = dict(serializer.validated_data)
-        evidences = data.pop("evidences", [])
-        incident = cu18_services.create_incident(
-            condominium=condominium,
-            reporter=request.user,
-            reporter_resident=cu18_services.reporter_resident_for(condominium, request.user),
-            validated_data=data,
-            evidences=evidences,
-        )
-        incident = (
-            Incident.objects.select_related("category", "priority", "sector", "unit", "asset", "reporter_user__person")
-            .prefetch_related("attachments")
-            .get(pk=incident.pk)
-        )
-        try:
-            record_audit_event(
-                action_code="INCIDENT_REPORTED",
-                resource_type="Incident",
-                resource_id=incident.pk,
-                description=f"Incidencia {incident.public_code} registrada.",
-                actor_user=request.user,
-                after_data={
-                    "incident_id": incident.pk,
-                    "public_code": incident.public_code,
-                    "condominium_id": getattr(incident, "condominium_id", None),
-                    "category": incident.category.code if incident.category else None,
-                    "priority": incident.priority.code if incident.priority else None,
-                    "sector_id": incident.sector_id,
-                    "unit_id": incident.unit_id,
-                    "asset_id": incident.asset_id,
-                    "evidences": len(evidences),
-                    "status": incident.status,
-                },
-                request=request,
-            )
-        except Exception:
-            pass
-        return Response(IncidentSerializer(incident).data, status=status.HTTP_201_CREATED)
-
-    @action(detail=False, methods=["get"], url_path="options")
-    def options(self, request):
-        condominium = TenantContext.get_current_tenant()
-        from paquetes.paquete3_incidencias_ia.cu18_registrar_incidencia.views import has_full_unit_scope
-        full_scope = has_full_unit_scope(request)
-        units = cu18_services.selectable_units(condominium, request.user, full_scope)
-        return Response(
-            {
-                "categories": IncidentCategorySerializer(self._categories(), many=True).data,
-                "priorities": PriorityLevelSerializer(self._priorities(), many=True).data,
-                "sectors": SectorOptionSerializer(cu18_services.tenant_sectors(condominium), many=True).data,
-                "units": UnitOptionSerializer(units, many=True).data,
-                "assets": AssetOptionSerializer(cu18_services.tenant_assets(condominium), many=True).data,
-                "evidence_rules": cu18_services.evidence_rules(),
-            }
-        )
-
-    @action(detail=False, methods=["get"], url_path="categories")
-    def categories(self, request):
-        return Response(IncidentCategorySerializer(self._categories(), many=True).data)
-
-    @action(detail=False, methods=["get"], url_path="priorities")
-    def priorities(self, request):
-        return Response(PriorityLevelSerializer(self._priorities(), many=True).data)
-
-    @staticmethod
-    def _categories():
-        return IncidentCategory.objects.filter(is_active=True).order_by("name")
-
-    @staticmethod
-    def _priorities():
-        return PriorityLevel.objects.filter(is_active=True).order_by("rank")
 
     def get_object(self) -> Incident:
         lookup_val = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
@@ -340,6 +316,13 @@ class IncidentTrackingViewSet(viewsets.GenericViewSet):
         if request.method == "POST":
             serializer = CreateAttachmentRequestSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
+
+            from pathlib import PurePosixPath
+            from rest_framework.exceptions import ValidationError
+            file_path = serializer.validated_data["file_path"]
+            prefix = f"incidents/{incident.condominium_id}/{incident.pk}/"
+            if not file_path.startswith(prefix) or ".." in PurePosixPath(file_path).parts or "\\" in file_path:
+                raise ValidationError({"file_path": "La evidencia debe pertenecer a esta incidencia."})
 
             attachment = IncidentAttachment.objects.create(
                 incident=incident,

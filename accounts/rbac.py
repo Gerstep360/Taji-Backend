@@ -3,7 +3,11 @@
     "manage_units": "Gestionar unidades",
     "manage_staff": "Gestionar personal",
     "manage_incidents": "Gestionar incidencias",
+    # Ya creados por incidents.0008; mantener una sola definición en fixtures y sincronización.
+    "analyze_incidents": "Solicitar análisis IA",
+    "review_incident_ai": "Revisar análisis IA",
     "manage_maintenance": "Gestionar mantenimientos",
+    "manage_assets": "Gestionar activos del condominio",
     "manage_visits": "Gestionar visitas",
     "manage_reservations": "Gestionar reservas",
     "manage_announcements": "Gestionar comunicados",
@@ -121,7 +125,7 @@ FORBIDDEN_PERMISSIONS_BY_ROLE: dict[str, frozenset[str]] = {
     # RN4: Directiva es solo lectura — únicamente puede tener permisos view_*/track_*
     "directiva": frozenset({
         "manage_residents", "manage_units", "manage_staff", "manage_incidents",
-        "manage_maintenance", "manage_visits", "manage_reservations",
+        "manage_maintenance", "manage_assets", "manage_visits", "manage_reservations",
         "manage_announcements", "manage_settings", "manage_roles",
         "register_visits", "validate_visits", "register_entry_exit",
         "capture_security_evidence", "manage_shift_handover",

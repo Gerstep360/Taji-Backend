@@ -1,0 +1,52 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+title CU32 — Tiempo ilustrativo en segundos, no medición
+scale 10 as 120 pixels
+concise "Webcam" as C
+concise "Detección" as D
+concise "Lectura de placa" as L
+concise "Registro TAJI" as R
+concise "Análisis contextual" as V
+@0
+C is APAGADA #E6E5F1;line:green
+D is INACTIVA #E6E5F1;line:green
+L is DESHABILITADA #E6E5F1;line:green
+R is SIN_CONSULTA #E6E5F1;line:green
+V is DESACTIVADO
+@2
+C is PERMISO
+@4
+C is EN_VIVO
+D is CARGANDO
+@7
+D is RECONOCIENDO
+@10
+L is RECORTE_1
+@13
+L is INCIERTA
+@21
+L is RECORTE_2
+@24
+L is CONFIRMADA
+R is CONSULTANDO
+V is EN_COLA
+@26
+R is RESULTADO
+V is ANALIZANDO
+@30
+V is ESPERA_LOCAL
+@70
+V is EN_COLA
+@75
+C is APAGADA
+D is INACTIVA
+L is CANCELADA
+R is SIN_CONSULTA
+V is CANCELADO
+L@10 <-> @21 : {mínimo 11 s}
+V@24 <-> @70 : {pausa mínima 40 s}
+@80
+@enduml
