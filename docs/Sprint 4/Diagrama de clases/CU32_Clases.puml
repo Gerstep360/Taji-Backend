@@ -4,7 +4,7 @@ skinparam shadowing false
 skinparam defaultFontName Arial
 skinparam defaultFontSize 12
 allowmixing
-title CU32 Reconocimiento por cámara
+title CU32 Reconocimiento por cámara — Incidencias e IA
 left to right direction
 skinparam dpi 160
 skinparam classBackgroundColor #F8F9FA
@@ -40,6 +40,36 @@ class "VehiculoDemo" as VehiculoDemo <<entity>> {
   - condominioId
 }
 class "Condominio" as Condominio <<entity>>
+class "Panel de observaciones" as Panel <<boundary>> {
+  + activarAnalisis(sector)
+  + consultarHistorial()
+  + guardarRevision()
+}
+class "Muestreador y disparador local" as Muestreador <<control>> {
+  + compararEscena()
+  + seleccionarVentana()
+}
+class "API de visión" as Vision <<control>> {
+  + validarPermisosYCuotas()
+  + encolarVentana()
+  + consultarEvidencia()
+}
+class "Trabajador visual" as Worker <<control>> {
+  + interpretarConNvidia()
+  + recuperarAntecedentes()
+  + deduplicar()
+}
+class "SesionVisual" as VisualSession <<entity>> {
+  - sector
+  - usuario
+  - vencimiento
+}
+class "ObservacionVisual" as VisualObservation <<entity>> {
+  - prediccion
+  - estadoRevision
+  - evidenciaOpcional
+}
+class "Incidencia" as Incident <<entity>>
 actor "Operador" as A
 A --> InterfazReconocimiento
 InterfazReconocimiento --> ControladorCamara
@@ -48,4 +78,13 @@ ControladorCamara --> ConsensoPlaca
 ControladorCamara --> ServicioPlacas
 ServicioPlacas --> VehiculoDemo
 Condominio "1" -- "0..*" VehiculoDemo
+InterfazReconocimiento --> Panel
+Panel --> Muestreador
+Panel --> Vision
+Vision --> VisualSession
+Vision --> VisualObservation
+Worker --> VisualObservation
+Worker --> Incident : recupera antecedentes autorizados
+Condominio "1" -- "0..*" VisualSession
+VisualSession "1" -- "0..*" VisualObservation
 @enduml

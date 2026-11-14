@@ -7,12 +7,12 @@ Especificación: [ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md](ATAJI_RECONOCIMIENTO_WEB
 | Campo | Descripción |
 | --- | --- |
 | Actor | Operador autenticado con condominio activo y permiso `validate_visits` |
-| Disparador | Pulsa **Iniciar cámara** en **Seguridad y Accesos → Reconocimiento por cámara** |
+| Disparador | Pulsa **Iniciar cámara** en **Incidencias e IA → Reconocimiento por cámara** |
 | Precondiciones | HTTPS o localhost, navegador compatible, una webcam autorizada |
-| Flujo principal | Solicitar cámara, cargar COCO-SSD, detectar objetos en el navegador, mostrar cajas y confianza. Opcionalmente habilitar OCR, centrar placa, confirmar dos lecturas y consultar el catálogo del condominio. |
+| Flujo principal | Detectar objetos en el navegador. Si el operador activa el análisis, comparar escenas, enviar una ventana autorizada a NVIDIA y mostrar observaciones y posibles antecedentes. El OCR de placas sigue siendo opcional e independiente. |
 | Alternativas | Permiso denegado, cámara ausente u ocupada, error de modelo, lectura incierta, placa no legible, proveedor no disponible o vehículo no registrado. |
-| Postcondición | Al detener, ocultar pestaña, cambiar de condominio o salir se liberan las pistas y se descartan respuestas obsoletas. Los eventos de sesión se borran. |
-| Exclusiones | Sin identificación facial, biometría, grabación, vigilancia permanente, consulta gubernamental, alertas masivas ni autorización de ingreso. |
+| Postcondición | Al detener, ocultar pestaña, cambiar de condominio o salir se liberan las pistas y se cancelan trabajos pendientes. Se conservan observaciones guardadas y revisiones según la política de retención. |
+| Exclusiones | Sin identificación facial, biometría, grabación continua, vigilancia permanente, consulta gubernamental ni autorización de ingreso. |
 
 ## Cómo probar
 
@@ -27,10 +27,11 @@ Especificación: [ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md](ATAJI_RECONOCIMIENTO_WEB
 
 | Método y ruta | Entrada y salida | Límites |
 | --- | --- | --- |
-| POST `/api/v1/security/cu32/plate/read/` | Multipart `image`, JPEG. Devuelve `{"plate": null}` o texto candidato. | 350 KB; 100–640 px de ancho, 32–360 px de alto; 6/min por usuario en la caché DRF. |
-| POST `/api/v1/security/cu32/plate/lookup/` | JSON `plate`. Devuelve `registered` y `vehicle` con placa y descripción, o nulo. | 12/min por usuario; coincidencia exacta normalizada solo en el condominio activo. |
+| POST `/api/v1/paquete3/cu32/plate/read/` | Multipart `image`, JPEG. Devuelve `{"plate": null}` o texto candidato. | 350 KB; 100–640 px de ancho, 32–360 px de alto; 6/min por usuario en la caché DRF. |
+| POST `/api/v1/paquete3/cu32/plate/lookup/` | JSON `plate`. Devuelve `registered` y `vehicle` con placa y descripción, o nulo. | 12/min por usuario; coincidencia exacta normalizada solo en el condominio activo. |
+| `/api/v1/paquete3/cu32/vision/…` | Configuración, sesión, ventanas, historial, revisión y evidencia protegida. | Permisos de condominio, cuotas de envío, una ventana en vuelo por sesión. |
 
-Ambas rutas requieren autenticación y permiso, no aceptan un condominio del cuerpo y devuelven `Cache-Control: no-store`. El OCR re-encodea el recorte sin metadatos. No se guardan imágenes ni video. `security.0007_cu32_demo_vehicle` añade solo el catálogo mínimo, con clave única condominio/placa. Los eventos permanecen en memoria, sin auditoría ni historial persistente.
+Las rutas requieren autenticación y permiso, no aceptan un condominio del cuerpo y devuelven `Cache-Control: no-store`. Los recortes del OCR no se guardan. La observación contextual es independiente y puede conservar evidencia opcional, con retención. Ver la [guía actual del incremento](../CU32_VISION_CONTEXTUAL.md) para activación, rutas, pruebas y limitaciones.
 
 ### Rendimiento y límites
 
@@ -47,6 +48,7 @@ Ambas rutas requieren autenticación y permiso, no aceptan un condominio del cue
 | --- | --- | --- |
 | Clases | [Fuente](<Diagrama de clases/CU32_Clases.puml>) | [PNG](<Diagrama de clases/CU32_Clases.png>) |
 | Secuencia | [Fuente](<Diagrama de secuencia/CU32_Secuencia.puml>) | [PNG](<Diagrama de secuencia/CU32_Secuencia.png>) |
+| Comunicación | [Fuente](<Diagrama de comunicación/CU32_Comunicacion.puml>) | [PNG](<Diagrama de comunicación/CU32_Comunicacion.png>) |
 | Navegación | [Fuente](<Diagrama de Navegación/CU32_Navegacion.puml>) | [PNG](<Diagrama de Navegación/CU32_Navegacion.png>) |
 | Tiempo | [Fuente](<Diagrama de Tiempo/CU32_Tiempo.puml>) | [PNG](<Diagrama de Tiempo/CU32_Tiempo.png>) |
 
@@ -54,11 +56,11 @@ Ambas rutas requieren autenticación y permiso, no aceptan un condominio del cue
 
 | ID | Tarea | Plataforma | Horas estimadas / PHU |
 | --- | --- | --- | ---: |
-| T146 | Gestionar el ciclo de la webcam | Web | 5 |
-| T147 | Detectar objetos en el navegador | Web / IA | 6 |
+| T146 | Gestionar webcam, consentimiento y sesión visual | Web | 5 |
+| T147 | Detectar objetos y activar análisis contextual por cambios | Web / IA | 6 |
 | T148 | Leer recortes y validar el consenso de placa | Backend / IA | 6 |
-| T149 | Consultar vehículos del condominio activo | Backend / QA | 4 |
-| | **Total propuesto** | | **21** |
+| T149 | Validar catálogo, antecedentes y revisión por condominio | Backend / QA | 4 |
+| | **Total del plan original (sin reestimación)** | | **21** |
 
 - [Historias por tarea](<historias de usuario/Historias_CU32.xlsx>), [plan de pruebas](<pruebas/Plan de pruebas (criterios de aceptación)/Plan_CU32.xlsx>) (28 casos) y [reporte consolidado por CU](<pruebas/reporte de pruebas/Reporte_CU32.xlsx>).
 - [Planificación del Sprint 4](<otros/Planificacion_CU32.xlsx>) y [Daily Scrum planificado](<otros/Daily_Scrum_CU32.xlsx>). No son actas de reuniones ya realizadas.
@@ -67,12 +69,13 @@ Ambas rutas requieren autenticación y permiso, no aceptan un condominio del cue
 
 | Comprobación | Resultado |
 | --- | --- |
-| Django y migraciones en SQLite aislada | 702 aprobadas y 6 omitidas en la entrega inicial; 7 pruebas específicas de CU32 |
-| Angular | 154 aprobadas después de integrar main; build correcto con advertencias de dependencias y del presupuesto previo de estilos |
-| Edge, fuente sintética y API controlada | 5 recorridos aprobados, incluido COCO-SSD real sobre una fuente sintética vacía; capturas [1440 px](<pruebas/evidencias/CU32-escritorio.png>) y [390 px](<pruebas/evidencias/CU32-390px.png>) |
-| Pendiente | Validar clases/precisión con webcam y placas autorizadas; probar OCR real y medir recursos en el despliegue objetivo. |
+| Django y migraciones | Migración aditiva y suite CU32 verificadas en PostgreSQL 18 aislado. |
+| Angular | 157 pruebas unitarias en la ampliación y compilación correcta después de mover el módulo; advertencias preexistentes de dependencias y estilos. |
+| Edge, fuente sintética y API controlada | 7 recorridos aprobados, incluidos COCO-SSD real y captura MP4 desde el búfer sin audio. |
+| NVIDIA real | Omni reconoció el orden de colores y aceptó un MP4 sintético de Edge normalizado por Django; la escena vacía se descartó en 1,312 s de inferencia. Cosmos respondió 404. |
+| Pendiente | Webcam y placas físicas autorizadas, precisión operativa, migración de la base del despliegue y medición en VPS. |
 
 ### Archivos de implementación
 
-- **Backend:** `security/models.py`, `security/plate.py`, `security/admin.py`, migración `security.0007`, `config/urls.py` y `paquetes/paquete2_seguridad_accesos/cu32_webcam/`.
-- **Frontend:** `app.routes.ts`, navegación de `main-layout.component.ts`, `paquetes/paquete2_seguridad_accesos/cu32_webcam/`, `e2e/cu32.spec.ts`, manifest y lockfile de npm. Dependencias nuevas: COCO-SSD 2.2.3, TensorFlow.js Core, Converter, CPU y WebGL 4.22.0.
+- **Backend:** `paquetes/paquete3_incidencias_ia/cu32_webcam/`, `config/urls.py`, migraciones `security.0007` y `security.0008`.
+- **Frontend:** `app.routes.ts`, navegación de `main-layout.component.ts`, `paquetes/paquete3_incidencias_ia/cu32_webcam/` y `e2e/cu32.spec.ts`. Se conserva COCO-SSD 2.2.3 y TensorFlow.js 4.22.0.
