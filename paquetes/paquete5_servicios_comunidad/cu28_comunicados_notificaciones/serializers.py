@@ -79,6 +79,8 @@ class DeviceTokenSerializer(serializers.ModelSerializer):
 
 class NotificationSerializer(serializers.ModelSerializer):
     is_read = serializers.SerializerMethodField(read_only=True)
+    priority = serializers.SerializerMethodField(read_only=True)
+    audience = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Notification
@@ -89,6 +91,8 @@ class NotificationSerializer(serializers.ModelSerializer):
             "message",
             "resource_type",
             "resource_id",
+            "priority",
+            "audience",
             "sent_at",
             "read_at",
             "is_read",
@@ -101,6 +105,8 @@ class NotificationSerializer(serializers.ModelSerializer):
             "message",
             "resource_type",
             "resource_id",
+            "priority",
+            "audience",
             "sent_at",
             "is_read",
             "created_at",
@@ -108,3 +114,23 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     def get_is_read(self, obj) -> bool:
         return obj.read_at is not None
+
+    def get_priority(self, obj) -> str:
+        if obj.resource_type == "announcement" and obj.resource_id:
+            try:
+                announcement = Announcement.objects.filter(pk=int(obj.resource_id)).only("priority").first()
+                if announcement:
+                    return announcement.priority
+            except (ValueError, TypeError):
+                pass
+        return "NORMAL"
+
+    def get_audience(self, obj) -> str:
+        if obj.resource_type == "announcement" and obj.resource_id:
+            try:
+                announcement = Announcement.objects.filter(pk=int(obj.resource_id)).only("audience").first()
+                if announcement:
+                    return announcement.audience
+            except (ValueError, TypeError):
+                pass
+        return "ALL"
