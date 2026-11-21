@@ -318,3 +318,36 @@ class Cu28ComunicadosNotificacionesTests(APITestCase):
             f"/api/v1/paquete5/cu28/announcements/{ann_b.pk}/"
         )
         self.assertEqual(res_detail.status_code, 404)
+
+    # -------------------------------------------------------------
+    # ESCENARIO 7: Serialización de prioridad y audiencia en notificaciones (CU28 Popups)
+    # -------------------------------------------------------------
+    def test_notification_serializer_includes_priority_and_audience(self):
+        ann = Announcement.objects.create(
+            condominium=self.tenant_a,
+            created_by_user=self.admin_a,
+            title="Aviso de Emergencia - Corte de Agua",
+            body="Corte programado urgente.",
+            audience=Announcement.Audience.RESIDENTS,
+            priority=Announcement.Priority.HIGH,
+            status=Announcement.Status.PUBLISHED,
+        )
+        notif = Notification.objects.create(
+            user=self.resident_a1,
+            notification_type="ANNOUNCEMENT",
+            title=ann.title,
+            message=ann.body,
+            resource_type="announcement",
+            resource_id=str(ann.pk),
+        )
+
+        self.client.force_authenticate(user=self.resident_a1)
+        res = self.client.get("/api/v1/notifications/?unread=true")
+        self.assertEqual(res.status_code, 200)
+
+        results = res.data.get("results", res.data) if isinstance(res.data, dict) else res.data
+        item = next((n for n in results if n["id"] == notif.pk), None)
+        self.assertIsNotNone(item)
+        self.assertEqual(item["priority"], "HIGH")
+        self.assertEqual(item["audience"], "RESIDENTS")
+        self.assertFalse(item["is_read"])
