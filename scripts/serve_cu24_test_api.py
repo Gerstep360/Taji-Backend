@@ -1,7 +1,7 @@
 """Servidor local de integración: base SQLite de pruebas en memoria, nunca PostgreSQL real.
 
 Ejecutar desde Backend con .venv/Scripts/python.exe scripts/serve_cu24_test_api.py.
-Detener con Ctrl+C después de e2e/cu24-live.spec.ts. No usar en producción.
+Sirve los casos de regresión de Sprint 1, activos y comunidad. No usar en producción.
 """
 import io
 import json
@@ -37,6 +37,15 @@ database = setup_databases(verbosity=0, interactive=False)
 try:
     own = Condominium.objects.create(name='CU24 Prueba local', slug='cu24-live')
     other = Condominium.objects.create(name='CU24 Otro condominio', slug='cu24-other')
+    sprint1 = Condominium.objects.create(name='Condominio de prueba Sprint 1', slug='sprint1-live')
+    for name, slug in [('admin', 'administrador'), ('residente', 'residente')]:
+        role = Role.objects.get(slug=slug)
+        person = Person.objects.create(first_name='Sprint', last_name=name, document_number='S1-' + name)
+        user = User.objects.create_user(email=f'{name}@sprint1.taji.test', password='TajiSprint1-Test2026!',
+                                        role=role, person=person, is_approved=True)
+        TenantMembership.objects.create(user=user, condominium=sprint1, role=role, is_default=True)
+        if slug == 'residente':
+            Resident.objects.create(person=person, condominium=sprint1)
     for slug in ['administrador', 'residente']:
         role = Role.objects.get(slug=slug)
         person = Person.objects.create(first_name='CU24', last_name=slug, document_number='LIVE-' + slug)

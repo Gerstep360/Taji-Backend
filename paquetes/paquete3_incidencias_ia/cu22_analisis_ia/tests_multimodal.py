@@ -163,7 +163,10 @@ class IncidentMultimodalTests(MediaRootMixin, IncidentTrackingTestCase):
         self.assertFalse(response.data['processor']['available'])
 
     def test_once_worker_expires_its_heartbeat_on_exit(self):
-        with patch('paquetes.paquete3_incidencias_ia.cu22_analisis_ia.worker.claim_job', return_value=None):
+        # The real worker owns a separate connection; this TestCase owns an outer transaction.
+        with patch('paquetes.paquete3_incidencias_ia.cu22_analisis_ia.worker.close_old_connections'), patch(
+            'paquetes.paquete3_incidencias_ia.cu22_analisis_ia.worker.claim_job', return_value=None
+        ):
             run_worker(once=True)
         self.assertFalse(processor_status()['available'])
 

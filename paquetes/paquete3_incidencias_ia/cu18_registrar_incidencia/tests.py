@@ -506,7 +506,10 @@ class IncidentCodeConcurrencyTests(TransactionTestCase):
     def test_parallel_creation_produces_unique_codes(self):
         condo = Condominium.objects.create(name="Paralelo")
         sector = Sector.objects.create(condominium=condo, code="P", name="P")
-        category = IncidentCategory.objects.filter(is_active=True).first()
+        category = IncidentCategory.objects.create(code="PARALLEL", name="Prueba de concurrencia")
+        PriorityLevel.objects.get_or_create(
+            code=services.DEFAULT_PRIORITY_CODE, defaults={"name": "Prioridad de prueba", "rank": 20},
+        )
         user = make_user("residente", "parallel", condo=condo)
         errors, barrier = [], threading.Barrier(8)
 
