@@ -42,6 +42,7 @@ urlpatterns = [
     path("api/v1/paquete1/", include("paquetes.paquete1_usuarios_condominio.urls")),
     path("api/v1/paquete2/", include("paquetes.paquete2_seguridad_accesos.urls")),
     path("api/v1/paquete3/", include("paquetes.paquete3_incidencias_ia.urls")),
+    path("api/v1/paquete5/", include("paquetes.paquete5_servicios_comunidad.urls")),
     path("api/v1/paquete6/", include("paquetes.paquete6_reportes_analitica.urls")),
     path("api/v1/cu31/", include("paquetes.paquete6_reportes_analitica.cu31_reportes.urls")),
     path("api/v1/security/", include("paquetes.paquete2_seguridad_accesos.urls")),
