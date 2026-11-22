@@ -29,11 +29,13 @@ def api_not_found(_request, _path):
 
 
 urlpatterns = [
+    path("api/v1/operations/", include("operations.urls")),
     path("api/v1/security/cu32/", include("paquetes.paquete3_incidencias_ia.cu32_webcam.urls_legacy")),
     path("api/v1/paquete3/cu32/", include("paquetes.paquete3_incidencias_ia.cu32_webcam.urls")),
     path("api/v1/assets/scan/", include("paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.urls")),
     path("api/v1/assets/", include("paquetes.paquete4_activos_mantenimiento.cu23_gestionar_activos.urls")),
     path("api/v1/maintenance/", include("paquetes.paquete4_activos_mantenimiento.cu25_mantenimiento_ordenes.urls")),
+    path("api/v1/", include("paquetes.paquete5_servicios_comunidad.cu29_asambleas_acuerdos.urls")),
     path("admin/", admin.site.urls),
     path("health/", health_check, name="health-root"),
     path("api/v1/health/", health_check, name="health"),
@@ -46,7 +48,9 @@ urlpatterns = [
     ),
     path("api/v1/paquete2/", include("paquetes.paquete2_seguridad_accesos.urls")),
     path("api/v1/paquete3/", include("paquetes.paquete3_incidencias_ia.urls")),
+    path("api/v1/paquete5/", include("paquetes.paquete5_servicios_comunidad.urls")),
     path("api/v1/paquete6/", include("paquetes.paquete6_reportes_analitica.urls")),
+    path("api/v1/notifications/", include("paquetes.paquete5_servicios_comunidad.cu28_comunicados_notificaciones.urls_notifications")),
     path("api/v1/cu31/", include("paquetes.paquete6_reportes_analitica.cu31_reportes.urls")),
     path("api/v1/paquete5/cu27/", include("paquetes.paquete5_servicios_comunidad.cu27_reservas_areas.urls")),
     path("api/v1/security/", include("paquetes.paquete2_seguridad_accesos.urls")),

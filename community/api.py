@@ -13,8 +13,9 @@ from notifications.models import Announcement
 from tenancy.context import TenantContext
 from tenancy.models import TenantMembership
 from tenancy.permissions import IsTenantMember
-from .models import CommonArea, Reservation, CommonAreaBlock, Assembly, Agreement
+from .models import CommonArea, Reservation, CommonAreaSchedule, CommonAreaBlock, Assembly, Agreement
 from auditlog.views import AuditEventListView, CanViewAuditLog
+from maintenance.models import WorkOrder
 
 
 def allowed(user, code):
@@ -48,6 +49,7 @@ class ScopedSerializer(serializers.ModelSerializer):
             'sector': lambda: Sector.objects.all_tenants().filter(condominium_id=tenant, is_active=True),
             'resident': lambda: Resident.objects.all_tenants().filter(condominium_id=tenant, status='ACTIVE'),
             'common_area': lambda: CommonArea.objects.filter(condominium_id=tenant),
+            'work_order': lambda: WorkOrder.objects.all_tenants().filter(condominium_id=tenant),
             'assembly': lambda: Assembly.objects.filter(condominium_id=tenant),
             'responsible_user': lambda: User.objects.filter(pk__in=TenantMembership.objects.filter(condominium_id=tenant, is_active=True).values('user_id'), is_active=True),
         }
@@ -61,10 +63,66 @@ class AreaSerializer(ScopedSerializer):
         if value is not None and value < 1:
             raise ValidationError('La capacidad debe ser mayor que cero.')
         return value
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise ValidationError('El nombre del área es obligatorio.')
+        tenant = TenantContext.get_current_tenant_id()
+        duplicates = CommonArea.objects.filter(condominium_id=tenant, name=value)
+        if self.instance:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise ValidationError('Ya existe un área común con ese nombre en este condominio.')
+        return value
     sector_name = serializers.CharField(source='sector.name', read_only=True, default='')
     class Meta:
         model = CommonArea
         fields = ('id', 'name', 'description', 'sector', 'sector_name', 'capacity', 'requires_approval', 'status')
+
+
+class AreaScheduleSerializer(ScopedSerializer):
+    weekday = serializers.IntegerField(min_value=0, max_value=6)
+
+    class Meta:
+        model = CommonAreaSchedule
+        fields = ('id', 'common_area', 'weekday', 'opens_at', 'closes_at', 'is_active')
+
+    def validate(self, data):
+        opens = data.get('opens_at', getattr(self.instance, 'opens_at', None))
+        closes = data.get('closes_at', getattr(self.instance, 'closes_at', None))
+        weekday = data.get('weekday', getattr(self.instance, 'weekday', None))
+        area = data.get('common_area', getattr(self.instance, 'common_area', None))
+        if opens and closes and closes <= opens:
+            raise ValidationError({'closes_at': 'La hora de cierre debe ser posterior a la de apertura.'})
+        if area is not None and weekday is not None and opens and closes:
+            duplicates = CommonAreaSchedule.objects.filter(common_area=area, weekday=weekday, opens_at=opens, closes_at=closes)
+            if self.instance:
+                duplicates = duplicates.exclude(pk=self.instance.pk)
+            if duplicates.exists():
+                raise ValidationError({'opens_at': 'Ya existe un horario idéntico para ese día de la semana.'})
+        return data
+
+
+class AreaBlockSerializer(ScopedSerializer):
+    created_by_user = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = CommonAreaBlock
+        fields = ('id', 'common_area', 'work_order', 'blocked_from', 'blocked_until', 'reason', 'created_by_user', 'created_at')
+        read_only_fields = ('created_by_user', 'created_at')
+
+    def validate_reason(self, value):
+        value = value.strip()
+        if not value:
+            raise ValidationError('Describe el motivo del bloqueo.')
+        return value
+
+    def validate(self, data):
+        start = data.get('blocked_from', getattr(self.instance, 'blocked_from', None))
+        end = data.get('blocked_until', getattr(self.instance, 'blocked_until', None))
+        if start and end and end <= start:
+            raise ValidationError({'blocked_until': 'El fin del bloqueo debe ser posterior al inicio.'})
+        return data
 
 
 class MobileCondominiumSerializer(serializers.ModelSerializer):
@@ -179,7 +237,9 @@ class CommunityViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('No tienes permiso para administrar este módulo.')
     def perform_create(self, serializer):
         self.require_manager()
-        values = {'condominium_id': TenantContext.get_current_tenant_id()}
+        values = {}
+        if any(field.name == 'condominium' for field in serializer.Meta.model._meta.fields):
+            values['condominium_id'] = TenantContext.get_current_tenant_id()
         if any(field.name == 'created_by_user' for field in serializer.Meta.model._meta.fields):
             values['created_by_user'] = self.request.user
         self.audit(serializer.save(**values), 'CREATED')
@@ -197,9 +257,74 @@ class CommunityViewSet(viewsets.ModelViewSet):
         return Response(status=204)
 
 
+def filter_by_common_area(qs, request):
+    area = request.query_params.get('common_area')
+    if area:
+        key = area.strip()
+        if not key.isascii() or not key.isdigit():
+            raise ValidationError({'common_area': 'Selecciona un área común válida.'})
+        qs = qs.filter(common_area_id=int(key))
+    return qs
+
+
 class CommonAreaViewSet(CommunityViewSet):
     serializer_class = AreaSerializer
     manage_permission = 'manage_reservations'
+
+
+class AreaScheduleViewSet(CommunityViewSet):
+    serializer_class = AreaScheduleSerializer
+    manage_permission = 'manage_reservations'
+    tenant_lookup = 'common_area__condominium_id'
+    search_fields = ()
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CommonAreaSchedule.objects.none()
+        qs = super().get_queryset().select_related('common_area').order_by('common_area_id', 'weekday', 'opens_at')
+        return filter_by_common_area(qs, self.request)
+
+    def perform_create(self, serializer):
+        try:
+            with transaction.atomic():
+                super().perform_create(serializer)
+        except IntegrityError:
+            raise ValidationError({'opens_at': 'Ya existe un horario idéntico para ese día de la semana.'}) from None
+
+    def perform_update(self, serializer):
+        try:
+            with transaction.atomic():
+                super().perform_update(serializer)
+        except IntegrityError:
+            raise ValidationError({'opens_at': 'Ya existe un horario idéntico para ese día de la semana.'}) from None
+
+    def destroy(self, request, *args, **kwargs):
+        self.require_manager()
+        obj = self.get_object()
+        obj.is_active = False
+        obj.save(update_fields=['is_active'])
+        self.audit(obj, 'CLOSED')
+        return Response(status=204)
+
+
+class AreaBlockViewSet(CommunityViewSet):
+    serializer_class = AreaBlockSerializer
+    manage_permission = 'manage_reservations'
+    tenant_lookup = 'common_area__condominium_id'
+    search_fields = ('reason', 'common_area__name')
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CommonAreaBlock.objects.none()
+        qs = super().get_queryset().select_related('common_area', 'work_order').order_by('common_area_id', 'blocked_from')
+        return filter_by_common_area(qs, self.request)
+
+    def destroy(self, request, *args, **kwargs):
+        self.require_manager()
+        obj = self.get_object()
+        self.audit(obj, 'DELETED')
+        obj.delete()
+        return Response(status=204)
 
 
 class CondominiumViewSet(CommunityViewSet):

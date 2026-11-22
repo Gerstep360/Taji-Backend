@@ -1,0 +1,27 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU36 — Comparar cotizaciones con IA · Secuencia
+autonumber
+actor Administrador as A
+boundary "Cotizaciones" as UI
+control "Django / Operaciones" as API
+database PostgreSQL as DB
+participant NVIDIA as AI
+A -> UI : Comparar dos a cinco cotizaciones
+UI -> API : Enviar IDs seleccionados
+API -> DB : Revisar pertenencia al condominio
+API -> API : Verificar misma solicitud y moneda; calcular cifras
+alt Sin permiso o datos inválidos
+  API --> UI : Informar el problema
+else Entrada válida
+  API -> DB : Reservar intento sin modificar registros
+  API -> AI : Enviar solo datos estructurados
+  alt Salida válida
+    AI --> API : Sugerencia
+    API --> UI : Datos verificados y sugerencia
+  else Falla de proveedor
+    API --> UI : Datos verificados para revisión manual
+  end
+end
+@enduml

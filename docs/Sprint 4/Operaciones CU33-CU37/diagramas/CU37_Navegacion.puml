@@ -1,0 +1,15 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU37 — Sugerir seguimiento con IA · Navegacion
+[*] --> Operaciones
+state "Inspecciones" as Listado
+state "Sugerencias de seguimiento" as Panel
+Operaciones --> Listado : Con permiso
+Listado --> Panel : Seleccionar datos
+Panel --> Listado : Cambiar selección
+state "Datos verificados" as Datos
+Panel --> Datos : Solicitar análisis
+Datos --> Panel : Revisar sugerencia o seguir manualmente
+Listado --> Operaciones : Regresar
+@enduml

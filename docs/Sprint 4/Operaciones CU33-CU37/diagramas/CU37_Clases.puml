@@ -1,0 +1,19 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU37 — Sugerir seguimiento con IA · Clases
+class "Pantalla Inspecciones" as UI <<boundary>>
+class "Operations API" as API <<control>>
+class "Inspección" as Record <<entity>> {
+  Checklist estructurado, sin notas internas
+}
+class "Condominio activo" as Tenant <<entity>>
+UI --> API : Analizar una inspección
+API --> Record : alcance y validación
+Tenant "1" -- "0..*" Record
+class "Asistente acotado" as Advisor <<control>>
+class "Intento de análisis" as Attempt <<entity>>
+API --> Advisor : comparte solo datos estructurados
+API --> Attempt : verifica cuota
+Advisor ..> Record : no modifica
+@enduml

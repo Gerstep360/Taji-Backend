@@ -1,0 +1,15 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU34 — Gestionar cotizaciones · Navegacion
+[*] --> Operaciones
+state "Cotizaciones" as Listado
+state "Editor de cotización" as Panel
+Operaciones --> Listado : Con permiso
+Listado --> Panel : Nuevo / Editar
+Panel --> Listado : Guardar / Cancelar
+state "Confirmación de eliminación" as Confirmar
+Listado --> Confirmar : Eliminar
+Confirmar --> Listado : Confirmar o cancelar
+Listado --> Operaciones : Regresar
+@enduml

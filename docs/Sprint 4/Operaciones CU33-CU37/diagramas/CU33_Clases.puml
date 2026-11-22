@@ -1,0 +1,15 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU33 — Gestionar garantías · Clases
+class "Pantalla Garantías" as UI <<boundary>>
+class "Operations API" as API <<control>>
+class "Garantía" as Record <<entity>> {
+  Referencia, cobertura, vencimiento
+}
+class "Condominio activo" as Tenant <<entity>>
+UI --> API : Registrar / editar / eliminar garantía
+API --> Record : alcance y validación
+Tenant "1" -- "0..*" Record
+
+@enduml

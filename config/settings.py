@@ -32,12 +32,14 @@ INSTALLED_APPS = [
     "auditlog.apps.AuditlogConfig",
     "security.apps.SecurityConfig",
     "incidents.apps.IncidentsConfig",
+    "operations",
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",
     "tenancy.apps.TenancyConfig",
     "reports",
     "paquetes.paquete1_usuarios_condominio.cu02_roles_permisos.apps.Cu02RolesPermisosConfig",
+    "paquetes.paquete5_servicios_comunidad.cu28_comunicados_notificaciones.apps.Cu28ComunicadosNotificacionesConfig",
     "paquetes.paquete6_reportes_analitica.cu31_reportes.apps.Cu31ReportesConfig",
 ]
 

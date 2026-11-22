@@ -1,9 +1,11 @@
 """Pruebas del CU27 (T049, T050, endpoints de T096/T121/T122)."""
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta
+from threading import Barrier
 
 from django.db import IntegrityError, connection, transaction
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -308,3 +310,40 @@ class PostgresExclusionTests(TestCase):
                                        end_at=start + timedelta(hours=3), status="PENDING")
         Reservation.objects.create(common_area=area, resident=resident, start_at=start + timedelta(hours=1),
                                    end_at=start + timedelta(hours=3), status="CANCELLED")
+
+
+@unittest.skipUnless(connection.vendor == "postgresql", "Requiere dos transacciones en PostgreSQL.")
+class PostgresConcurrentReservationTests(TransactionTestCase):
+    def test_only_one_concurrent_overlapping_reservation_commits(self):
+        tenant = Condominium.objects.create(name="CU27 PG concurrente")
+        area = CommonArea.objects.create(condominium=tenant, name="Salón concurrente")
+        residents = [
+            Resident.objects.create(condominium=tenant, person=Person.objects.create(first_name=name))
+            for name in ("Primero", "Segundo")
+        ]
+        start = timezone.now() + timedelta(days=2)
+        ready = Barrier(2, timeout=10)
+
+        def reserve(entry):
+            index, resident = entry
+            try:
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET LOCAL statement_timeout = '10s'")
+                    if index:
+                        ready.wait()
+                    Reservation.objects.create(common_area_id=area.pk, resident_id=resident.pk,
+                                               start_at=start, end_at=start + timedelta(hours=1), status="PENDING")
+                    if not index:
+                        ready.wait()
+                return "committed"
+            except IntegrityError as exc:
+                self.assertEqual(exc.__cause__.diag.constraint_name, "ex_reservation_no_overlap")
+                return "blocked"
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(reserve, enumerate(residents)))
+        self.assertCountEqual(results, ["committed", "blocked"])
+        self.assertEqual(Reservation.objects.filter(common_area=area).count(), 1)

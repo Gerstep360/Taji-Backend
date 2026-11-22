@@ -1,0 +1,27 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU36 — Comparar cotizaciones con IA · Tiempo (ilustrativo)
+scale 1 as 90 pixels
+concise "Pantalla web" as Web
+concise "Django" as Api
+concise "NVIDIA" as AI
+@0
+Web is Lista
+Api is Libre
+AI is Inactivo
+@1
+Web is Selección
+@2
+Web is Enviando
+Api is Validación
+@3
+Api is Esperando
+AI is Analizando
+@5
+Web is Revisión
+Api is Libre
+AI is Inactivo
+@6
+Web is Lista
+@enduml

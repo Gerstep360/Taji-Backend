@@ -1,0 +1,16 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU34 — Gestionar cotizaciones · Comunicacion
+left to right direction
+object "Administrador" as A
+object "Cotizaciones" as UI
+object "API de Operaciones" as API
+object "PostgreSQL" as DB
+A --> UI : 1. Registrar / editar / eliminar cotización
+UI --> API : 1.1. Solicitar operación
+API --> DB : 1.2. Consultar condominio y registros
+API --> API : 1.3. Normalizar código y validar monto y moneda
+API --> DB : 1.4. Persistir y auditar
+API --> UI : 2. Actualizar lista o mostrar error
+@enduml

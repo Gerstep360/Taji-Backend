@@ -18,7 +18,7 @@ class CommonArea(models.Model):
         null=True,
         blank=True,
     )
-    name = models.CharField(max_length=120, unique=True)
+    name = models.CharField(max_length=120)
     description = models.TextField(blank=True)
     capacity = models.IntegerField(null=True, blank=True)
     requires_approval = models.BooleanField(default=False)
@@ -32,7 +32,11 @@ class CommonArea(models.Model):
             models.CheckConstraint(
                 condition=Q(capacity__isnull=True) | Q(capacity__gt=0),
                 name="chk_common_area_capacity",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=("condominium", "name"),
+                name="uq_common_area_condominium_name",
+            ),
         ]
 
     def __str__(self):

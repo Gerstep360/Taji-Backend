@@ -2,9 +2,12 @@ from rest_framework.routers import SimpleRouter
 from django.urls import path
 from .api import MobileAuditView, CondominiumViewSet
 from .api import CommonAreaViewSet, ReservationViewSet, AnnouncementViewSet, AssemblyViewSet, AgreementViewSet
+from .api import AreaScheduleViewSet, AreaBlockViewSet
 router = SimpleRouter()
 router.register('condominium', CondominiumViewSet, basename='community-condominium')
 router.register('areas', CommonAreaViewSet, basename='community-area')
+router.register('area-schedules', AreaScheduleViewSet, basename='community-area-schedule')
+router.register('area-blocks', AreaBlockViewSet, basename='community-area-block')
 router.register('reservations', ReservationViewSet, basename='community-reservation')
 router.register('announcements', AnnouncementViewSet, basename='community-announcement')
 router.register('assemblies', AssemblyViewSet, basename='community-assembly')

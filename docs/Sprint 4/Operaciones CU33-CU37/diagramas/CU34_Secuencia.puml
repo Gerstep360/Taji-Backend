@@ -1,0 +1,22 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU34 — Gestionar cotizaciones · Secuencia
+autonumber
+actor Administrador as A
+boundary "Cotizaciones" as UI
+control "Django / Operaciones" as API
+database PostgreSQL as DB
+
+A -> UI : Registrar / editar / eliminar cotización
+UI -> API : Enviar acción y formulario
+API -> DB : Revisar pertenencia al condominio
+API -> API : Normalizar código y validar monto y moneda
+alt Sin permiso o datos inválidos
+  API --> UI : Informar el problema
+else Entrada válida
+  API -> DB : Guardar cambio y evento de auditoría
+  API --> UI : Confirmar resultado
+  UI -> API : Actualizar la lista
+end
+@enduml
