@@ -35,6 +35,7 @@ urlpatterns = [
     path("api/v1/assets/scan/", include("paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.urls")),
     path("api/v1/assets/", include("paquetes.paquete4_activos_mantenimiento.cu23_gestionar_activos.urls")),
     path("api/v1/maintenance/", include("paquetes.paquete4_activos_mantenimiento.cu25_mantenimiento_ordenes.urls")),
+    path("api/v1/", include("paquetes.paquete5_servicios_comunidad.cu29_asambleas_acuerdos.urls")),
     path("admin/", admin.site.urls),
     path("health/", health_check, name="health-root"),
     path("api/v1/health/", health_check, name="health"),

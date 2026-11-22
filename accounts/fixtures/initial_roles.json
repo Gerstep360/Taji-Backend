@@ -82,6 +82,16 @@
   {
     "model": "accounts.systempermission",
     "fields": {
+      "code": "manage_assemblies",
+      "name": "Gestionar asambleas y acuerdos",
+      "description": "Permiso preparado para m\u00f3dulos futuros.",
+      "module": "general",
+      "is_active": true
+    }
+  },
+  {
+    "model": "accounts.systempermission",
+    "fields": {
       "code": "manage_visits",
       "name": "Gestionar visitas",
       "description": "Permiso preparado para m\u00f3dulos futuros.",
@@ -475,6 +485,9 @@
         ],
         [
           "manage_assets"
+        ],
+        [
+          "manage_assemblies"
         ]
       ]
     }
