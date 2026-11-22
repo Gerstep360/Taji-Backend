@@ -8,6 +8,7 @@
     "review_incident_ai": "Revisar análisis IA",
     "manage_maintenance": "Gestionar mantenimientos",
     "manage_assets": "Gestionar activos del condominio",
+    "manage_assemblies": "Gestionar asambleas y acuerdos",
     "manage_visits": "Gestionar visitas",
     "manage_reservations": "Gestionar reservas",
     "manage_announcements": "Gestionar comunicados",
@@ -125,7 +126,7 @@ FORBIDDEN_PERMISSIONS_BY_ROLE: dict[str, frozenset[str]] = {
     # RN4: Directiva es solo lectura — únicamente puede tener permisos view_*/track_*
     "directiva": frozenset({
         "manage_residents", "manage_units", "manage_staff", "manage_incidents",
-        "manage_maintenance", "manage_assets", "manage_visits", "manage_reservations",
+        "manage_maintenance", "manage_assets", "manage_assemblies", "manage_visits", "manage_reservations",
         "manage_announcements", "manage_settings", "manage_roles",
         "register_visits", "validate_visits", "register_entry_exit",
         "capture_security_evidence", "manage_shift_handover",
