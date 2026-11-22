@@ -218,3 +218,63 @@ class AccessEventApiTests(APITestCase):
         self.assertEqual(delete_response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         event.refresh_from_db()
         self.assertEqual(event.event_type, AccessEvent.Type.ENTRY)
+
+
+class UserVehicleApiTests(APITestCase):
+    def setUp(self):
+        from condominiums.models import Condominium
+        from security.models import DemoVehicle
+        from tenancy.models import TenantMembership
+
+        self.condo = Condominium.objects.create(name="Condominio Placas Test")
+        self.role = Role.objects.get(slug="residente")
+        self.person = Person.objects.create(
+            first_name="Carlos",
+            last_name="Vecino",
+            document_type=Person.DocumentType.CI,
+            document_number="888999",
+            contact_email="carlos@example.com",
+            phone="78901234",
+        )
+        self.user = User.objects.create_user(
+            email="carlos.vecino@example.com",
+            password="Password123!",
+            role=self.role,
+            person=self.person,
+        )
+        TenantMembership.objects.create(
+            user=self.user,
+            condominium=self.condo,
+            role=self.role,
+            is_default=True,
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_and_list_vehicle_with_user(self):
+        from security.models import DemoVehicle
+
+        create_res = self.client.post(
+            "/api/v1/security/vehicles/",
+            {
+                "plate": "xyz-789",
+                "description": "Camioneta Hilux Gris",
+                "user": self.user.id,
+            },
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED, create_res.data)
+        self.assertEqual(create_res.data["plate"], "XYZ789")
+        self.assertEqual(create_res.data["user_name"], "Carlos Vecino")
+
+        list_res = self.client.get("/api/v1/security/vehicles/")
+        self.assertEqual(list_res.status_code, status.HTTP_200_OK)
+        results = list_res.data.get("results", list_res.data)
+        self.assertTrue(any(v["plate"] == "XYZ789" for v in results))
+
+    def test_members_list_endpoint(self):
+        members_res = self.client.get("/api/v1/security/vehicles/members/")
+        self.assertEqual(members_res.status_code, status.HTTP_200_OK)
+        members = members_res.data
+        self.assertTrue(any(m["email"] == "carlos.vecino@example.com" for m in members))
+

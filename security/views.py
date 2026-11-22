@@ -4,10 +4,12 @@ from rest_framework.decorators import action
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 
-from accounts.models import Person
+from accounts.models import Person, User
 from condominiums.models import ResidentUnit, Unit
-from security.models import AccessEvent
-from security.serializers import AccessEventSerializer
+from security.models import AccessEvent, DemoVehicle
+from security.serializers import AccessEventSerializer, UserVehicleSerializer
+from tenancy.context import TenantContext
+from tenancy.models import TenantMembership
 
 
 class CanRegisterAccessEvents(BasePermission):
@@ -125,3 +127,58 @@ class AccessEventViewSet(
                 ]
             }
         )
+
+
+class UserVehicleViewSet(viewsets.ModelViewSet):
+    serializer_class = UserVehicleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_condo_id(self):
+        condo_id = TenantContext.get_current_tenant_id()
+        if not condo_id:
+            membership = self.request.user.tenant_memberships.filter(is_active=True).first()
+            condo_id = membership.condominium_id if membership else None
+        return condo_id
+
+    def get_queryset(self):
+        condo_id = self._get_condo_id()
+        qs = DemoVehicle.objects.filter(condominium_id=condo_id).select_related(
+            "user__person", "user__person__resident"
+        )
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(plate__icontains=search)
+                | Q(description__icontains=search)
+                | Q(user__person__first_name__icontains=search)
+                | Q(user__person__last_name__icontains=search)
+                | Q(user__email__icontains=search)
+            )
+        return qs.order_by("-created_at", "plate")
+
+    def perform_create(self, serializer):
+        condo_id = self._get_condo_id()
+        serializer.save(condominium_id=condo_id)
+
+    @action(detail=False, methods=["get"])
+    def members(self, request):
+        """Lista de usuarios/residentes del condominio actual para asociar a vehículos."""
+        condo_id = self._get_condo_id()
+        memberships = TenantMembership.objects.filter(
+            condominium_id=condo_id, is_active=True
+        ).select_related("user__person", "role")
+        data = []
+        for m in memberships:
+            u = m.user
+            p = getattr(u, "person", None)
+            name = p.full_name if p else (u.get_full_name() or u.email)
+            data.append({
+                "id": u.id,
+                "name": name,
+                "email": u.email,
+                "phone": p.phone if p else "",
+                "role": m.role.name if m.role else "",
+            })
+        data.sort(key=lambda x: x["name"])
+        return Response(data)
+

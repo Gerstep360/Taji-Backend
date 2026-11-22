@@ -1,6 +1,6 @@
 from rest_framework.routers import SimpleRouter
 
-from security.views import AccessEventViewSet
+from security.views import AccessEventViewSet, UserVehicleViewSet
 
 # Sin `app_name`. Este módulo se incluye dos veces, desde los prefijos
 # `api/v1/paquete2/` y `api/v1/security/`, y ambos alias los necesitan porque el
@@ -11,5 +11,6 @@ from security.views import AccessEventViewSet
 
 router = SimpleRouter()
 router.register("access-events", AccessEventViewSet, basename="access-event")
+router.register("vehicles", UserVehicleViewSet, basename="user-vehicle")
 
 urlpatterns = router.urls

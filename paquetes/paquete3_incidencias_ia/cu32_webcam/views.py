@@ -31,7 +31,7 @@ class WebcamThrottle(UserRateThrottle):
 
 class PlateThrottle(UserRateThrottle):
     scope = "cu32_plate"
-    rate = "6/min"
+    rate = "30/min"
 
 
 class PlateUnavailable(APIException):
@@ -108,10 +108,16 @@ class PlateLookupView(WebcamView):
         serializer = PlateLookup(data=request.data)
         serializer.is_valid(raise_exception=True)
         plate = serializer.validated_data["plate"]
-        vehicle = DemoVehicle.objects.filter(
-            condominium_id=TenantContext.get_current_tenant_id(), plate=plate,
-        ).values("plate", "description").first()
-        return Response({"registered": vehicle is not None, "vehicle": vehicle})
+        condo_id = TenantContext.get_current_tenant_id()
+        vehicle = (
+            DemoVehicle.objects.filter(condominium_id=condo_id, plate=plate)
+            .select_related("user__person", "user__person__resident")
+            .first()
+        )
+        if not vehicle:
+            return Response({"registered": False, "vehicle": None})
+        from security.serializers import UserVehicleSerializer
+        return Response({"registered": True, "vehicle": UserVehicleSerializer(vehicle).data})
 
 
 class PlateReadView(WebcamView):

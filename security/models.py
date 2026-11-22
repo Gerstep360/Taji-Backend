@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -9,16 +10,25 @@ from .visual_models import VisualObservation, VisualQuota, VisualSession  # noqa
 
 
 class DemoVehicle(models.Model):
-    """Catálogo mínimo de CU32; una coincidencia no autoriza el ingreso."""
+    """Catálogo de vehículos y placas del condominio."""
 
-    condominium = models.ForeignKey("condominiums.Condominium", on_delete=models.CASCADE)
+    condominium = models.ForeignKey("condominiums.Condominium", on_delete=models.CASCADE, related_name="vehicles")
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="vehicles",
+    )
     plate = models.CharField(max_length=20)
     description = models.CharField(max_length=120, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=("condominium", "plate"), name="cu32_unique_tenant_plate"),
         ]
+        ordering = ("-created_at", "plate")
 
     def clean(self):
         from django.core.exceptions import ValidationError
@@ -27,6 +37,13 @@ class DemoVehicle(models.Model):
         self.plate = normalize_plate(self.plate)
         if not self.plate:
             raise ValidationError({"plate": "Usa letras y números; se admiten espacios y guiones."})
+
+    def save(self, *args, **kwargs):
+        from .plate import normalize_plate
+        normalized = normalize_plate(self.plate)
+        if normalized:
+            self.plate = normalized
+        super().save(*args, **kwargs)
 
 
 class VisitAuthorization(models.Model):

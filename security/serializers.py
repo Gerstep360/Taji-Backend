@@ -12,7 +12,7 @@ from rest_framework import serializers
 from accounts.models import Person
 from condominiums.models import Resident, Staff, Unit
 
-from .models import AccessEvent, VisitAuthorization
+from .models import AccessEvent, DemoVehicle, VisitAuthorization
 
 
 class VisitorPersonSerializer(serializers.ModelSerializer):
@@ -257,3 +257,62 @@ class AccessEventSerializer(serializers.ModelSerializer):
         if attrs.get("occurred_at") is None:
             attrs["occurred_at"] = timezone.now()
         return attrs
+
+
+class UserVehicleSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    user_email = serializers.SerializerMethodField()
+    user_phone = serializers.SerializerMethodField()
+    unit_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DemoVehicle
+        fields = (
+            "id",
+            "plate",
+            "description",
+            "user",
+            "user_name",
+            "user_email",
+            "user_phone",
+            "unit_info",
+            "created_at",
+        )
+        read_only_fields = ("id", "created_at")
+
+    def get_user_name(self, obj):
+        if not obj.user:
+            return ""
+        if hasattr(obj.user, "person") and obj.user.person:
+            return obj.user.person.full_name
+        return obj.user.get_full_name() or obj.user.email
+
+    def get_user_email(self, obj):
+        return obj.user.email if obj.user else ""
+
+    def get_user_phone(self, obj):
+        if obj.user and hasattr(obj.user, "person") and obj.user.person:
+            return obj.user.person.phone
+        return ""
+
+    def get_unit_info(self, obj):
+        if not obj.user:
+            return ""
+        if hasattr(obj.user, "person") and hasattr(obj.user.person, "resident"):
+            resident = obj.user.person.resident
+            units = [
+                f"{ru.unit.sector.name + ' - ' if ru.unit.sector else ''}{ru.unit.code}"
+                for ru in resident.unit_links.select_related("unit__sector").all()
+            ]
+            if units:
+                return ", ".join(units)
+        return ""
+
+    def validate_plate(self, value):
+        from .plate import normalize_plate
+
+        plate = normalize_plate(value)
+        if not plate:
+            raise serializers.ValidationError("Ingresa una placa válida (letras y números).")
+        return plate
+

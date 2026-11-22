@@ -76,9 +76,9 @@ class WebcamTests(APITestCase):
 
     @patch(__package__ + ".views.read_plate", return_value="AB01")
     def test_ocr_is_throttled(self, reader):
-        codes = [self.client.post(self.read, {"image": self.crop()}, format="multipart").status_code for _ in range(7)]
-        self.assertEqual(codes, [200] * 6 + [429])
-        self.assertEqual(reader.call_count, 6)
+        codes = [self.client.post(self.read, {"image": self.crop()}, format="multipart").status_code for _ in range(31)]
+        self.assertEqual(codes, [200] * 30 + [429])
+        self.assertEqual(reader.call_count, 30)
 
     def test_previous_ocr_urls_keep_auth_and_catalogue(self):
         old = '/api/v1/security/cu32/plate/lookup/'
