@@ -9,14 +9,22 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 from wsgiref.simple_server import make_server
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ['DJANGO_SETTINGS_MODULE'] = 'config.settings_test'
 
 import django
-django.setup()
 from django.conf import settings
+
+# Set rates before DRF imports its throttle classes; all clients are on loopback.
+settings.REST_FRAMEWORK = {
+    **settings.REST_FRAMEWORK,
+    'DEFAULT_THROTTLE_RATES': {**settings.REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'], 'login': '120/minute'},
+}
+settings.NVIDIA = {**settings.NVIDIA, 'ENABLED': False}
+django.setup()
 from django.core.wsgi import get_wsgi_application
 from django.test.utils import setup_databases, teardown_databases
 from django.utils import timezone
@@ -71,7 +79,8 @@ try:
             start_response('200 OK', [('Content-Type', 'image/png')])
             return [qr.getvalue()]
         return application(environ, start_response)
-    with make_server('127.0.0.1', 18766, fixture_application) as server:
+    advice = {'summary': 'Sugerencia local de prueba.', 'actions': ['Verificar con el equipo responsable.']}
+    with patch('operations.views.advise', return_value=advice), make_server('127.0.0.1', 18766, fixture_application) as server:
         print(json.dumps({'ready': True, 'url': 'http://localhost:18766', 'database': 'SQLite test memory only'}), flush=True)
         server.serve_forever()
 except KeyboardInterrupt:
