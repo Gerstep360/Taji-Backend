@@ -137,6 +137,17 @@ class Reservation(models.Model):
     )
     approved_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    # CU27 / T049: trazabilidad de rechazo, cancelación y finalización.
+    rejection_reason = models.CharField(max_length=240, blank=True)
+    cancellation_reason = models.CharField(max_length=240, blank=True)
+    cancelled_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        related_name="cancelled_reservations",
+        null=True,
+        blank=True,
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
