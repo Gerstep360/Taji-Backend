@@ -42,6 +42,10 @@ urlpatterns = [
     path("api/v1/download/apk/", download_mobile_apk, name="download-apk"),
     path("downloads/taji.apk", download_mobile_apk, name="download-apk-direct"),
     path("api/v1/paquete1/", include("paquetes.paquete1_usuarios_condominio.urls")),
+    path(
+        "api/v1/maintenance/",
+        include("paquetes.paquete4_activos_mantenimiento.cu25_mantenimiento_ordenes.urls"),
+    ),
     path("api/v1/paquete2/", include("paquetes.paquete2_seguridad_accesos.urls")),
     path("api/v1/paquete3/", include("paquetes.paquete3_incidencias_ia.urls")),
     path("api/v1/paquete5/", include("paquetes.paquete5_servicios_comunidad.urls")),
