@@ -15,6 +15,7 @@ from tenancy.context import TenantContext
 from .permissions import CanAccessAssets, HasAssetsTenant, can_manage
 from .serializers import AssetSerializer, AssetTypeSerializer
 from .tenancy import tenant_assets
+from paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.serializers import AssetHistoryResponseSerializer
 
 ASSET_QR_PAYLOAD_PREFIX = "TAJI-ASSET"
 
@@ -176,12 +177,15 @@ class AssetViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @extend_schema(responses=AssetHistoryResponseSerializer)
     @action(detail=True, methods=("get",), url_path="history")
     def history(self, request, pk=None):
         asset = self.get_object()
-        incidents = asset.incidents.order_by("-created_at")[:50]
-        work_orders = asset.work_orders.order_by("-created_at")[:50]
-        plans = asset.maintenance_plans.order_by("-next_due_at")
+        from paquetes.paquete4_activos_mantenimiento.cu25_mantenimiento_ordenes.tenancy import tenant_work_orders
+        tenant_id = TenantContext.get_current_tenant_id()
+        incidents = asset.incidents.filter(condominium_id=tenant_id).order_by("-created_at")[:50]
+        work_orders = tenant_work_orders(tenant_id).filter(asset=asset).order_by("-created_at")[:50]
+        plans = asset.maintenance_plans.order_by("-next_due_at")[:50]
         return Response(
             {
                 "asset_id": asset.pk,

@@ -7,7 +7,7 @@ from tenancy.permissions import IsTenantMember
 # catálogo (alta/edición/baja); "view_general_status" es el permiso de
 # solo-lectura que ya tiene asignado el rol Directiva.
 MANAGEMENT_PERMISSIONS = {"manage_assets"}
-VIEW_ONLY_PERMISSIONS = {"view_general_status", "maintain_assets"}
+VIEW_ONLY_PERMISSIONS = {"view_general_status", "maintain_assets", "manage_maintenance"}
 
 
 def _role_permission_codes(user):
@@ -15,8 +15,8 @@ def _role_permission_codes(user):
     if user.is_superuser:
         return None
     membership = TenantContext.get_current_membership()
-    role = membership.role if membership else None
-    if not role:
+    role = membership.role if membership and membership.user_id == user.pk and membership.is_active else None
+    if not role or not role.is_active:
         return set()
     return set(role.permissions.filter(is_active=True).values_list("code", flat=True))
 

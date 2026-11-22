@@ -1,0 +1,70 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+title CU32 Reconocimiento por cámara — Incidencias e IA
+hide footbox
+autonumber
+actor Operador as A
+boundary "Visor Angular" as I
+participant "Webcam / COCO-SSD" as C
+control "API Django" as D
+control "Trabajador visual" as W
+participant NVIDIA as N
+database "Registro TAJI" as B
+group Inicio explícito
+A -> I : Iniciar cámara
+activate I
+I -> C : Solicitar permiso y cargar modelo
+C --> I : Pista autorizada o error
+deactivate I
+end
+loop Cámara activa
+I -> C : Analizar fotograma reducido
+C --> I : Clases, recuadros y confianza
+end
+opt OCR habilitado y vehículo en la guía
+loop Hasta tres recortes
+I -> D : POST JPEG
+activate D
+D -> D : Permiso, límite y validación
+D -> N : Leer placa visible
+N --> D : Texto candidato o nulo
+D --> I : Lectura o error
+deactivate D
+end
+alt Dos lecturas consecutivas coinciden
+I -> D : POST placa confirmada
+D -> B : Buscar en condominio activo
+B --> D : Coincidencia o vacío
+D --> I : Resultado del registro
+else Lectura incierta
+I -> I : No consultar registro
+end
+end
+A -> I : Abrir observaciones y activar análisis
+I -> D : Crear sesión para el sector seleccionado
+D -> B : Validar condominio, sector y permiso
+D --> I : Sesión y vencimiento
+loop Cambio sostenido o revisión general
+I -> I : Comparar píxeles y respetar pausa
+I -> D : Enviar MP4 breve o JPEG, sin audio
+D -> B : Validar medio y cuotas; encolar
+D --> I : 202, estado en cola
+W -> B : Reclamar ventana y retirar medio temporal
+W -> N : Interpretar ventana autorizada
+N --> W : Respuesta estructurada o error
+W -> B : Relacionar incidencias visibles y guardar si aporta novedad
+I -> D : Consultar estado y detalle
+D --> I : Observación, pausa o fallo
+end
+opt Revisión humana autorizada
+A -> I : Confirmar, corregir, descartar o proponer
+I -> D : Guardar decisión
+D -> B : Conservar predicción y auditar revisión
+end
+A -> I : Detener o salir
+I -> C : Liberar pistas y detener inferencia
+I -> D : Cerrar sesión y cancelar trabajos pendientes
+@enduml

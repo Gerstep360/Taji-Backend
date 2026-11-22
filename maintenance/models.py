@@ -4,6 +4,8 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
+from tenancy.managers import TenantAwareManager
+
 
 class AssetType(models.Model):
     code = models.CharField(max_length=50, unique=True)
@@ -58,10 +60,19 @@ class Asset(models.Model):
 
 
 class Supplier(models.Model):
+    objects = TenantAwareManager()
+
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Activo"
         INACTIVE = "INACTIVE", "Inactivo"
 
+    condominium = models.ForeignKey(
+        "condominiums.Condominium",
+        on_delete=models.CASCADE,
+        related_name="maintenance_suppliers",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=160)
     contact_name = models.CharField(max_length=120, blank=True)
     phone = models.CharField(max_length=25, blank=True)
@@ -72,6 +83,7 @@ class Supplier(models.Model):
 
     class Meta:
         db_table = "supplier"
+        indexes = [models.Index(fields=("condominium", "status"), name="idx_supplier_condo_status")]
 
     def __str__(self):
         return self.name
@@ -104,6 +116,8 @@ class MaintenancePlan(models.Model):
 
 
 class WorkOrder(models.Model):
+    objects = TenantAwareManager()
+
     class Type(models.TextChoices):
         PREVENTIVE = "PREVENTIVE", "Preventivo"
         CORRECTIVE = "CORRECTIVE", "Correctivo"
@@ -117,6 +131,13 @@ class WorkOrder(models.Model):
         COMPLETED = "COMPLETED", "Completada"
         CANCELLED = "CANCELLED", "Cancelada"
 
+    condominium = models.ForeignKey(
+        "condominiums.Condominium",
+        on_delete=models.CASCADE,
+        related_name="maintenance_work_orders",
+        null=True,
+        blank=True,
+    )
     public_code = models.CharField(max_length=30, unique=True)
     incident = models.ForeignKey(
         "incidents.Incident",
@@ -181,6 +202,7 @@ class WorkOrder(models.Model):
             )
         ]
         indexes = [
+            models.Index(fields=("condominium", "status"), name="idx_work_condo_status"),
             models.Index(fields=("status", "scheduled_for"), name="idx_work_status_schedule"),
             models.Index(
                 fields=("current_assignee_staff", "status"), name="idx_work_assignee_status"
@@ -263,3 +285,25 @@ class WorkOrderCostItem(models.Model):
     @property
     def total(self):
         return self.quantity * self.unit_cost
+
+
+class WorkOrderStatusHistory(models.Model):
+    work_order = models.ForeignKey(
+        WorkOrder, on_delete=models.CASCADE, related_name="status_history"
+    )
+    changed_by_user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        related_name="work_order_status_changes",
+        null=True,
+        blank=True,
+    )
+    from_status = models.CharField(max_length=20, null=True, blank=True)
+    to_status = models.CharField(max_length=20)
+    notes = models.CharField(max_length=500, blank=True)
+    changed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "work_order_status_history"
+        ordering = ("changed_at", "pk")
+        indexes = [models.Index(fields=("work_order", "changed_at"), name="idx_work_status_history")]

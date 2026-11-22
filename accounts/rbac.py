@@ -3,7 +3,11 @@
     "manage_units": "Gestionar unidades",
     "manage_staff": "Gestionar personal",
     "manage_incidents": "Gestionar incidencias",
+    # Ya creados por incidents.0008; mantener una sola definición en fixtures y sincronización.
+    "analyze_incidents": "Solicitar análisis IA",
+    "review_incident_ai": "Revisar análisis IA",
     "manage_maintenance": "Gestionar mantenimientos",
+    "manage_assets": "Gestionar activos del condominio",
     "manage_visits": "Gestionar visitas",
     "manage_reservations": "Gestionar reservas",
     "manage_announcements": "Gestionar comunicados",
@@ -32,7 +36,6 @@
     "complete_cleaning_tasks": "Completar tareas de limpieza",
     "access_assigned_external_orders": "Acceder a órdenes externas asignadas",
     "manage_roles": "Gestionar roles y permisos",
-    "manage_assets": "Gestionar activos del condominio",
 }
 
 ROLE_DEFINITIONS = {

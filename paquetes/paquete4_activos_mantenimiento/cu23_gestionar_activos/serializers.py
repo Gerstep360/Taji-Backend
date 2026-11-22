@@ -46,6 +46,14 @@ class AssetSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("id", "qr_uuid", "created_at", "updated_at")
 
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Resolver por solicitud: el manager no debe capturar el tenant al importar URLs.
+        self.fields["sector_id"].queryset = Sector.objects.all_tenants().filter(
+            condominium_id=TenantContext.get_current_tenant_id(), is_active=True,
+        )
+
     def validate_sector_id(self, sector):
         tenant_id = TenantContext.get_current_tenant_id()
         if not tenant_id or sector.condominium_id != tenant_id:

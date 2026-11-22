@@ -94,6 +94,21 @@ class CU23AssetApiTests(APITestCase):
         }
         return self.client.post(reverse("asset-list"), payload, format="json")
 
+    def test_sector_queryset_is_resolved_per_request_not_at_module_import(self):
+        from tenancy.context import TenantContext
+        from .serializers import AssetSerializer
+        TenantContext.set_current_tenant(self.condo)
+        try:
+            own = AssetSerializer().fields["sector_id"].queryset
+            self.assertTrue(own.filter(pk=self.sector.pk).exists())
+            self.assertFalse(own.filter(pk=self.other_sector.pk).exists())
+            TenantContext.set_current_tenant(self.other_condo)
+            other = AssetSerializer().fields["sector_id"].queryset
+            self.assertTrue(other.filter(pk=self.other_sector.pk).exists())
+            self.assertFalse(other.filter(pk=self.sector.pk).exists())
+        finally:
+            TenantContext.clear()
+
     def test_admin_creates_asset_scoped_to_tenant(self):
         response = self._create_asset()
 
@@ -154,6 +169,7 @@ class CU23AssetApiTests(APITestCase):
     def test_history_endpoint_aggregates_incident_work_order_and_plan(self):
         incident = Incident.objects.create(
             public_code="INC-CU23-1",
+            condominium=self.condo,
             description="Fuga detectada",
             asset=self.asset,
         )
