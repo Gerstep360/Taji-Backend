@@ -1,0 +1,18 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU37 — Sugerir seguimiento con IA · Comunicacion
+left to right direction
+object "Administrador" as A
+object "Inspecciones" as UI
+object "API de Operaciones" as API
+object "PostgreSQL" as DB
+A --> UI : 1. Analizar una inspección
+UI --> API : 1.1. Solicitar operación
+API --> DB : 1.2. Consultar condominio y registros
+API --> API : 1.3. Validar que haya hallazgos o puntos sin revisar
+object "NVIDIA" as AI
+API --> AI : 1.4. Solicitar sugerencia
+AI --> API : 1.5. Responder o fallar
+API --> UI : 2. Mostrar comparación o revisión manual
+@enduml

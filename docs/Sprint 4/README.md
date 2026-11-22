@@ -2,6 +2,8 @@
 
 Especificación: [ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md](ATAJI_RECONOCIMIENTO_WEBCAM_CODEX.md). Identificadores CU32 y T146–T149 propuestos para este incremento. No se modificó Móvil.
 
+Incremento separado: [Operaciones CU33–CU37](<Operaciones CU33-CU37/README.md>) y [Daily del 4 al 22 de noviembre](<Operaciones CU33-CU37/Daily Scrum.md>).
+
 ## Ficha del caso de uso
 
 | Campo | Descripción |

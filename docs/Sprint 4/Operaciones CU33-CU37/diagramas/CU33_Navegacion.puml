@@ -1,0 +1,15 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU33 — Gestionar garantías · Navegacion
+[*] --> Operaciones
+state "Garantías" as Listado
+state "Editor de garantía" as Panel
+Operaciones --> Listado : Con permiso
+Listado --> Panel : Nuevo / Editar
+Panel --> Listado : Guardar / Cancelar
+state "Confirmación de eliminación" as Confirmar
+Listado --> Confirmar : Eliminar
+Confirmar --> Listado : Confirmar o cancelar
+Listado --> Operaciones : Regresar
+@enduml

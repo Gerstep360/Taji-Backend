@@ -1,0 +1,27 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU33 — Gestionar garantías · Tiempo (ilustrativo)
+scale 1 as 90 pixels
+concise "Pantalla web" as Web
+concise "Django" as Api
+
+@0
+Web is Lista
+Api is Libre
+
+@1
+Web is Edición
+@2
+Web is Enviando
+Api is Validación
+@3
+Api is Persistiendo
+
+@5
+Web is Confirmación
+Api is Libre
+
+@6
+Web is Lista
+@enduml

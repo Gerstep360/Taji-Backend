@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "auditlog.apps.AuditlogConfig",
     "security.apps.SecurityConfig",
     "incidents.apps.IncidentsConfig",
+    "operations",
     "maintenance.apps.MaintenanceConfig",
     "community.apps.CommunityConfig",
     "notifications.apps.NotificationsConfig",

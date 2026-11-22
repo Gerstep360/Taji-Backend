@@ -1,0 +1,15 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+title CU35 — Registrar inspecciones · Clases
+class "Pantalla Inspecciones" as UI <<boundary>>
+class "Operations API" as API <<control>>
+class "Inspección" as Record <<entity>> {
+  Lugar, fecha, checklist, notas internas
+}
+class "Condominio activo" as Tenant <<entity>>
+UI --> API : Registrar / editar / eliminar inspección
+API --> Record : alcance y validación
+Tenant "1" -- "0..*" Record
+
+@enduml

@@ -29,6 +29,7 @@ def api_not_found(_request, _path):
 
 
 urlpatterns = [
+    path("api/v1/operations/", include("operations.urls")),
     path("api/v1/security/cu32/", include("paquetes.paquete3_incidencias_ia.cu32_webcam.urls_legacy")),
     path("api/v1/paquete3/cu32/", include("paquetes.paquete3_incidencias_ia.cu32_webcam.urls")),
     path("api/v1/assets/scan/", include("paquetes.paquete4_activos_mantenimiento.cu24_identificar_activo_qr.urls")),
