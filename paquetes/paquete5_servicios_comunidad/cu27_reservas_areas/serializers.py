@@ -1,4 +1,5 @@
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_serializer
 from rest_framework import serializers
 
 from community.models import CommonArea, CommonAreaBlock, Reservation
@@ -28,6 +29,7 @@ class ScheduleSerializer(serializers.Serializer):
     closes_at = serializers.TimeField(format="%H:%M")
 
 
+@extend_schema_serializer(component_name="Cu27ReservableArea")
 class AreaSerializer(serializers.ModelSerializer):
     sector_name = serializers.CharField(source="sector.name", read_only=True, default="")
     status_label = serializers.CharField(source="get_status_display", read_only=True)
@@ -64,6 +66,7 @@ class AreaSerializer(serializers.ModelSerializer):
         }
 
 
+@extend_schema_serializer(component_name="Cu27Reservation")
 class ReservationSerializer(serializers.ModelSerializer):
     common_area_name = serializers.CharField(source="common_area.name", read_only=True)
     resident_name = serializers.CharField(source="resident.person.full_name", read_only=True)

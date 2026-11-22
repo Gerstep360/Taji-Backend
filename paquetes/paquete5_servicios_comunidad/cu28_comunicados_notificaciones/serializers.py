@@ -1,9 +1,11 @@
+from drf_spectacular.utils import extend_schema_serializer
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from notifications.models import Announcement, DeviceToken, Notification
 from tenancy.context import TenantContext
 
 
+@extend_schema_serializer(component_name="Cu28Announcement")
 class AnnouncementSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField(read_only=True)
     audience_display = serializers.CharField(source="get_audience_display", read_only=True)
@@ -116,21 +118,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         return obj.read_at is not None
 
     def get_priority(self, obj) -> str:
-        if obj.resource_type == "announcement" and obj.resource_id:
-            try:
-                announcement = Announcement.objects.filter(pk=int(obj.resource_id)).only("priority").first()
-                if announcement:
-                    return announcement.priority
-            except (ValueError, TypeError):
-                pass
-        return "NORMAL"
+        return getattr(obj, "announcement_priority", None) or "NORMAL"
 
     def get_audience(self, obj) -> str:
-        if obj.resource_type == "announcement" and obj.resource_id:
-            try:
-                announcement = Announcement.objects.filter(pk=int(obj.resource_id)).only("audience").first()
-                if announcement:
-                    return announcement.audience
-            except (ValueError, TypeError):
-                pass
-        return "ALL"
+        return getattr(obj, "announcement_audience", None) or "ALL"

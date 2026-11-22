@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_serializer
 from rest_framework import serializers
 
 from accounts.models import User
@@ -32,6 +33,7 @@ class AssemblyPublicSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+@extend_schema_serializer(component_name="Cu29Assembly")
 class AssemblySerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     created_by_name = serializers.SerializerMethodField()
@@ -97,6 +99,7 @@ class AssemblyCancelSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True, max_length=200)
 
 
+@extend_schema_serializer(component_name="Cu29Agreement")
 class AgreementSerializer(serializers.ModelSerializer):
     assembly_title = serializers.CharField(source="assembly.title", read_only=True)
     responsible_user = serializers.PrimaryKeyRelatedField(

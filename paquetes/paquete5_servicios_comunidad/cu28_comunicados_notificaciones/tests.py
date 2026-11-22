@@ -351,3 +351,30 @@ class Cu28ComunicadosNotificacionesTests(APITestCase):
         self.assertEqual(item["priority"], "HIGH")
         self.assertEqual(item["audience"], "RESIDENTS")
         self.assertFalse(item["is_read"])
+
+    def test_notifications_and_actions_follow_active_condominium(self):
+        user = self.resident_a1
+        TenantMembership.objects.create(
+            user=user, condominium=self.tenant_b, role=Role.objects.get(slug="residente"), is_active=True,
+        )
+        notices = []
+        for tenant in (self.tenant_a, self.tenant_b):
+            announcement = Announcement.objects.create(condominium=tenant, title="Aviso", body="Contenido",
+                                                       status=Announcement.Status.PUBLISHED)
+            notices.append(Notification.objects.create(
+                user=user, notification_type="ANNOUNCEMENT", title="Aviso", message="Contenido",
+                resource_type="announcement", resource_id=str(announcement.pk),
+            ))
+        local, foreign = notices
+        self.client.force_authenticate(user)
+        base = "/api/v1/notifications/"
+        headers = {"HTTP_X_TENANT_ID": str(self.tenant_a.pk)}
+        listing = self.client.get(base, **headers)
+        self.assertEqual([item["id"] for item in listing.data["results"]], [local.pk])
+        self.assertEqual(self.client.get(base + "unread_count/", **headers).data["unread_count"], 1)
+        self.assertEqual(self.client.post(base + f"{foreign.pk}/mark_read/", **headers).status_code, 404)
+        self.assertEqual(self.client.post(base + "mark_all_read/", **headers).data["marked_read"], 1)
+        foreign.refresh_from_db()
+        self.assertIsNone(foreign.read_at)
+        self.assertEqual(self.client.get(base + "unread_count/",
+                         HTTP_X_TENANT_ID=str(self.tenant_b.pk)).data["unread_count"], 1)

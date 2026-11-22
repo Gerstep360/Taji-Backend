@@ -1,4 +1,5 @@
-from django.db.models import Q
+from django.db.models import CharField, OuterRef, Q, Subquery
+from django.db.models.functions import Cast
 from django.utils import timezone
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
@@ -202,13 +203,22 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     """
 
     serializer_class = NotificationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanViewCommunityAnnouncements]
+
+    def _scoped(self):
+        tenant_id = TenantContext.get_current_tenant_id()
+        if getattr(self, "swagger_fake_view", False) or tenant_id is None:
+            return Notification.objects.none()
+        related = Announcement.objects.filter(condominium_id=tenant_id).annotate(
+            notification_id=Cast("pk", CharField())
+        ).filter(notification_id=OuterRef("resource_id"))
+        return Notification.objects.filter(user=self.request.user).annotate(
+            announcement_priority=Subquery(related.values("priority")[:1]),
+            announcement_audience=Subquery(related.values("audience")[:1]),
+        ).filter(~Q(resource_type__iexact="announcement") | Q(announcement_priority__isnull=False))
 
     def get_queryset(self):
-        if getattr(self, "swagger_fake_view", False):
-            return Notification.objects.none()
-
-        qs = Notification.objects.filter(user=self.request.user)
+        qs = self._scoped()
         unread = self.request.query_params.get("unread")
         if unread in ("true", "1", "True"):
             qs = qs.filter(read_at__isnull=True)
@@ -226,13 +236,11 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["post", "patch"])
     def mark_all_read(self, request):
-        updated_count = Notification.objects.filter(
-            user=request.user, read_at__isnull=True
-        ).update(read_at=timezone.now())
+        updated_count = self._scoped().filter(read_at__isnull=True).update(read_at=timezone.now())
 
         return Response({"marked_read": updated_count})
 
     @action(detail=False, methods=["get"])
     def unread_count(self, request):
-        count = Notification.objects.filter(user=request.user, read_at__isnull=True).count()
+        count = self._scoped().filter(read_at__isnull=True).count()
         return Response({"unread_count": count})
