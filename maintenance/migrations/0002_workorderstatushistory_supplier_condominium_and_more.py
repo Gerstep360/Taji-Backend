@@ -19,6 +19,7 @@ def backfill_work_order_tenants(apps, schema_editor):
         tenant_ids = {
             tenant_id
             for tenant_id in (
+                getattr(order.incident, "condominium_id", None),
                 getattr(getattr(order.asset, "sector", None), "condominium_id", None),
                 getattr(
                     getattr(getattr(order.maintenance_plan, "asset", None), "sector", None),
@@ -48,7 +49,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('condominiums', '0007_resident_condominium_staff_condominium'),
-        ('incidents', '0003_seed_catalogs'),
+        ('incidents', '0004_incident_condominium_sequence'),
         ('maintenance', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

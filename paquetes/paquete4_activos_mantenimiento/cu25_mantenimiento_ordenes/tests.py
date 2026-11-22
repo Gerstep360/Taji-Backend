@@ -124,6 +124,68 @@ class CU25WorkOrderApiTests(APITestCase):
             reverse("maintenance-work-order-list"), payload, format="json"
         )
 
+
+
+
+
+
+    def test_worker_without_staff_or_supplier_identity_sees_no_orders(self):
+        self._create_order()
+        self.staff.status = Staff.Status.INACTIVE
+        self.staff.save(update_fields=["status"])
+        self.worker.email = ""
+        self.worker.save(update_fields=["email"])
+        self.client.force_authenticate(user=self.worker)
+        response = self.client.get(reverse("maintenance-work-order-list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["results"], [])
+
+    def test_mislinked_legacy_order_is_not_visible_in_either_condominium(self):
+        from incidents.models import Incident
+        incident = Incident.objects.create(condominium=self.other_condo, public_code="INC-MIXED", asset=self.other_asset)
+        order = WorkOrder.objects.create(asset=self.asset, incident=incident, public_code="OT-MIXED", title="Mixed references", work_type="CORRECTIVE")
+        self.client.force_authenticate(user=self.admin)
+        self.assertEqual(self.client.get(reverse("maintenance-work-order-detail", args=[order.pk])).status_code, 404)
+        from .tenancy import tenant_work_orders
+        self.assertFalse(tenant_work_orders(self.other_condo.pk).filter(pk=order.pk).exists())
+
+    def test_order_can_reference_incident_without_sector_or_asset(self):
+        from incidents.models import Incident
+        incident = Incident.objects.create(condominium=self.condo, public_code="INC-NO-LOCATION")
+        response = self._create_order(incident_id=incident.pk)
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_inactive_role_cannot_access_orders(self):
+        self.admin_role.is_active = False
+        self.admin_role.save(update_fields=["is_active"])
+        self.client.force_authenticate(user=self.admin)
+        self.assertEqual(self.client.get(reverse("maintenance-work-order-list")).status_code, 403)
+
+    def test_disguised_image_is_rejected(self):
+        order = self._create_order().data
+        response = self.client.post(reverse("maintenance-work-order-add-attachment", args=[order["id"]]),
+            {"file": SimpleUploadedFile("fake.jpg", b"not an image", content_type="image/jpeg")}, format="multipart")
+        self.assertEqual(response.status_code, 400)
+
+    def test_legacy_supplier_migration_preserves_ambiguous_ownership(self):
+        import importlib
+        from types import SimpleNamespace
+        from django.apps import apps
+        own = Supplier.objects.create(name="Legacy own")
+        shared = Supplier.objects.create(name="Legacy shared")
+        for code, supplier, condo, asset in [
+            ("ONE", own, self.condo, self.asset),
+            ("SHARED-A", shared, self.condo, self.asset),
+            ("SHARED-B", shared, self.other_condo, self.other_asset),
+        ]:
+            WorkOrder.objects.create(public_code=code, supplier=supplier, condominium=condo, asset=asset, title=code, work_type="INSPECTION")
+        migration = importlib.import_module("maintenance.migrations.0003_scope_legacy_suppliers")
+        migration.scope_suppliers(apps, SimpleNamespace(connection=SimpleNamespace(alias="default")))
+        own.refresh_from_db()
+        shared.refresh_from_db()
+        self.assertEqual(own.condominium_id, self.condo.pk)
+        self.assertIsNone(shared.condominium_id)
+
     def test_manager_creates_tenant_scoped_order_and_initial_history(self):
         response = self._create_order()
 
@@ -352,9 +414,9 @@ class CU25WorkOrderApiTests(APITestCase):
                     ),
                     {
                         "file": SimpleUploadedFile(
-                            "bomba.jpg",
-                            b"maintenance evidence",
-                            content_type="image/jpeg",
+                            "bomba.pdf",
+                            b"%PDF-1.4\n%%EOF",
+                            content_type="application/pdf",
                         ),
                         "caption": "Sello desgastado",
                     },

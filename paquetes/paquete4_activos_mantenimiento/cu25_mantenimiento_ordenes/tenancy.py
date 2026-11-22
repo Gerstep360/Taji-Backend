@@ -26,23 +26,22 @@ def tenant_suppliers(tenant_id):
 
 
 def tenant_incidents(tenant_id):
-    return Incident.objects.filter(
-        Q(sector__condominium_id=tenant_id)
-        | Q(unit__sector__condominium_id=tenant_id)
-        | Q(asset__sector__condominium_id=tenant_id)
-    ).distinct()
+    return Incident.objects.filter(condominium_id=tenant_id)
 
 
 def tenant_work_orders(tenant_id):
     legacy_scope = (
         Q(asset__sector__condominium_id=tenant_id)
         | Q(maintenance_plan__asset__sector__condominium_id=tenant_id)
-        | Q(incident__sector__condominium_id=tenant_id)
-        | Q(incident__unit__sector__condominium_id=tenant_id)
-        | Q(incident__asset__sector__condominium_id=tenant_id)
+        | Q(incident__condominium_id=tenant_id)
     )
     return (
         WorkOrder.objects.all_tenants()
         .filter(Q(condominium_id=tenant_id) | Q(condominium__isnull=True) & legacy_scope)
+        .filter(Q(asset__isnull=True) | Q(asset__sector__condominium_id=tenant_id))
+        .filter(Q(maintenance_plan__isnull=True) | Q(maintenance_plan__asset__sector__condominium_id=tenant_id))
+        .filter(Q(incident__isnull=True) | Q(incident__condominium_id=tenant_id))
+        .filter(Q(current_assignee_staff__isnull=True) | Q(current_assignee_staff__condominium_id=tenant_id))
+        .filter(Q(supplier__isnull=True) | Q(supplier__condominium_id=tenant_id))
         .distinct()
     )

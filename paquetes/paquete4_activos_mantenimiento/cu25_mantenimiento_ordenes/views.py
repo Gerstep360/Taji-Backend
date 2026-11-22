@@ -160,7 +160,7 @@ class MaintenanceStaffOptionsViewSet(mixins.ListModelMixin, viewsets.GenericView
             condominium_id=TenantContext.get_current_tenant_id(),
             status=Staff.Status.ACTIVE,
             staff_type__in=(Staff.Type.MAINTENANCE, Staff.Type.ADMINISTRATION, Staff.Type.OTHER),
-        ).select_related("person")
+        ).select_related("person").order_by("person__first_name", "person__last_name", "pk")
 
 
 @method_decorator(never_cache, name="dispatch")
@@ -316,7 +316,7 @@ class WorkOrderViewSet(viewsets.ModelViewSet):
         )
 
         if not can_manage(self.request.user):
-            conditions = Q()
+            conditions = Q(pk__in=[])
             staff = _staff_for_user(self.request.user, tenant_id)
             if staff:
                 conditions |= Q(current_assignee_staff=staff)
@@ -646,6 +646,28 @@ class WorkOrderViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"file": "Formatos permitidos: JPG, PNG, WEBP, PDF y MP4."}
             )
+        # La extensión no basta: una imagen debe decodificarse y coincidir con su formato.
+        uploaded_file.seek(0)
+        head = uploaded_file.read(32)
+        uploaded_file.seek(0)
+        valid = False
+        if file_type == WorkOrderAttachment.Type.IMAGE:
+            from PIL import Image
+            try:
+                with Image.open(uploaded_file) as image:
+                    expected = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}
+                    valid = image.format == expected[extension]
+                    image.verify()
+            except Exception:
+                valid = False
+            finally:
+                uploaded_file.seek(0)
+        elif extension == ".pdf":
+            valid = head.startswith(b"%PDF-")
+        elif extension == ".mp4":
+            valid = head[4:8] == b"ftyp"
+        if not valid:
+            raise ValidationError({"file": "El contenido del archivo no corresponde al formato indicado."})
         stored_path = default_storage.save(
             f"maintenance/work-orders/{TenantContext.get_current_tenant_id()}/{uuid.uuid4().hex}{extension}",
             uploaded_file,
@@ -696,6 +718,7 @@ class WorkOrderViewSet(viewsets.ModelViewSet):
         except FileNotFoundError as error:
             raise NotFound("El archivo de evidencia ya no está disponible.") from error
         response = FileResponse(file_handle, as_attachment=True)
+        response["X-Content-Type-Options"] = "nosniff"
         response["Content-Disposition"] = (
             f'attachment; filename="evidencia-{attachment.pk}{os.path.splitext(attachment.file_path)[1]}"'
         )

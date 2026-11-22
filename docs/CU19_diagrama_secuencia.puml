@@ -1,0 +1,182 @@
+@startuml
+skinparam style strictuml
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+
+skinparam defaultFontName "Segoe UI"
+skinparam defaultFontSize 11
+
+' Configuración para forzar flechas síncronas y estilos estrictos UML 2.5 / 2.5.1
+skinparam sequence {
+    ArrowColor #000000
+    LifeLineBorderColor #666666
+    LifeLineBackgroundColor #FFFFFF
+    GroupBorderColor #333333
+    GroupBackgroundColor #FAFAFA
+    ParticipantBorderColor #334155
+    ParticipantBackgroundColor #FFFFFF
+}
+
+' Declaración de Participantes (Actor -> Interfaz -> Control -> Entidades)
+participant ":ActorAutorizado\n(Residente / Administrador /\nDirectiva / Personal responsable)" as Actor <<Actor>>
+participant ":InterfazSeguimientoIncidencia\n(Móvil / Web)" as Vista <<Interfaz>>
+participant ":ControladorIncidencia" as Controlador <<Control>>
+participant ":ServicioIncidencia" as Servicio <<Control>>
+participant ":Incidencia" as Incidencia <<Entidad>>
+participant ":HistorialEstado" as Historial <<Entidad>>
+participant ":AsignacionIncidencia" as Asignacion <<Entidad>>
+participant ":ComentarioIncidencia" as Comentario <<Entidad>>
+participant ":AdjuntoIncidencia" as Adjunto <<Entidad>>
+participant ":Personal" as Personal <<Entidad>>
+participant ":Usuario/Rol" as Usuario <<Entidad>>
+participant ":FichaResidente" as Residente <<Entidad>>
+participant ":Unidad/Sector" as Ubicacion <<Entidad>>
+
+group sd CU19 Consultar seguimiento e historial de incidencia
+
+    ' ================================================================== '
+    ' A. Tablero de incidencias con filtros (Web)                        '
+    ' ================================================================== '
+    Actor -[#black]> Vista : 1 : AbrirTableroIncidencias(filtros)
+    activate Vista
+
+    alt El actor es Residente
+        Vista -[#black]> Controlador : 2 : ListarIncidencias(JWT, filtros, alcance=PROPIAS)
+    else El actor es Administrador
+        Vista -[#black]> Controlador : 2 : ListarIncidencias(JWT, filtros, alcance=GLOBAL)
+    else El actor es Directiva
+        Vista -[#black]> Controlador : 2 : ListarIncidencias(JWT, filtros, alcance=IMPORTANTES)
+    else El actor es Personal responsable
+        Vista -[#black]> Controlador : 2 : ListarIncidencias(JWT, filtros, alcance=ASIGNADAS)
+    end
+    activate Controlador
+
+    Controlador -[#black]> Usuario : 3 : ValidarPermisoYAlcance(usuarioId)
+    activate Usuario
+    Usuario --> Controlador : 4 : Rol, condominioId, residenteId, staffId
+    deactivate Usuario
+
+    Controlador -[#black]> Servicio : 5 : ListarIncidencias(condominioId, alcance, filtros, page)
+    activate Servicio
+
+    Servicio -[#black]> Incidencia : 6 : ConsultarIncidencias(condominioId, alcance, filtros, page)
+    activate Incidencia
+    Incidencia --> Servicio : 7 : Incidencias (estado, prioridad, due_at, target_minutes, responsableId)
+    deactivate Incidencia
+
+    loop Por cada incidencia del listado
+        Servicio -[#black]> Historial : 8 : ObtenerUltimoCambio(incidentId)
+        activate Historial
+        Historial --> Servicio : 9 : Último estado, fecha y autor
+        deactivate Historial
+
+        Servicio -[#black]> Personal : 10 : ObtenerResponsable(currentAssigneeStaffId)
+        activate Personal
+        Personal --> Servicio : 11 : Nombre, área, código
+        deactivate Personal
+    end
+
+    Servicio -[#black]> Servicio : 12 : CalcularPendientesYVencidas(due_at, estado, now)
+    Servicio --> Controlador : 13 : IncidenciaPageDTO
+    deactivate Servicio
+
+    Controlador --> Vista : 14 : 200 OK IncidenciaPageDTO
+    deactivate Controlador
+
+    Vista --> Actor : 15 : MostrarTableroIncidencias()
+
+    ' ================================================================== '
+    ' B. Detalle, seguimiento e historial (Web / Móvil)                  '
+    ' ================================================================== '
+    Actor -[#black]> Vista : 16 : SeleccionarIncidencia(publicCode)
+
+    Vista -[#black]> Controlador : 17 : ObtenerDetalleIncidencia(publicCode, JWT)
+    activate Controlador
+
+    Controlador -[#black]> Usuario : 18 : ValidarPermisoYAlcance(usuarioId)
+    activate Usuario
+    Usuario --> Controlador : 19 : Rol, condominioId, residenteId, staffId
+    deactivate Usuario
+
+    Controlador -[#black]> Servicio : 20 : ObtenerDetalleIncidencia(publicCode, condominioId, alcance)
+    activate Servicio
+
+    Servicio -[#black]> Incidencia : 21 : BuscarPorCodigo(publicCode, condominioId, alcance)
+    activate Incidencia
+    Incidencia --> Servicio : 22 : Incidencia + estado, prioridad, due_at, target_minutes, IDs
+    deactivate Incidencia
+
+    Servicio -[#black]> Historial : 23 : ListarCambios(incidentId)
+    activate Historial
+    Historial --> Servicio : 24 : Historial completo (from, to, comentario, fecha, autor)
+    deactivate Historial
+
+    Servicio -[#black]> Asignacion : 25 : ListarAsignaciones(incidentId)
+    activate Asignacion
+    Asignacion --> Servicio : 26 : Responsable actual e historial de asignaciones
+    deactivate Asignacion
+
+    Servicio -[#black]> Comentario : 27 : ListarComentarios(incidentId, PUBLIC)
+    activate Comentario
+    Comentario --> Servicio : 28 : Comentarios públicos
+    deactivate Comentario
+
+    Servicio -[#black]> Adjunto : 29 : ListarAdjuntos(incidentId)
+    activate Adjunto
+    Adjunto --> Servicio : 30 : Evidencias (imagen, video, documento)
+    deactivate Adjunto
+
+    Servicio -[#black]> Residente : 31 : ObtenerDatos(residenteId)
+    activate Residente
+    Residente --> Servicio : 32 : Nombre, contacto
+    deactivate Residente
+
+    Servicio -[#black]> Ubicacion : 33 : ObtenerDatos(unitId, sectorId)
+    activate Ubicacion
+    Ubicacion --> Servicio : 34 : Unidad, sector, piso
+    deactivate Ubicacion
+
+    loop Por cada cambio de estado o asignación del historial
+        Servicio -[#black]> Personal : 35 : ObtenerResponsable(staffId)
+        activate Personal
+        Personal --> Servicio : 36 : Nombre, área, código
+        deactivate Personal
+
+        Servicio -[#black]> Usuario : 37 : ObtenerAutor(changedByUserId)
+        activate Usuario
+        Usuario --> Servicio : 38 : Nombre, rol
+        deactivate Usuario
+    end
+
+    Servicio -[#black]> Servicio : 39 : ComponerDetalleIncidencia(cambios, asignaciones, comentarios, adjuntos)
+    Servicio --> Controlador : 40 : DetalleIncidenciaDTO
+    deactivate Servicio
+
+    Controlador --> Vista : 41 : 200 OK DetalleIncidenciaDTO
+    deactivate Controlador
+
+    opt El actor tiene permiso para ver comentarios internos
+        Vista -[#black]> Controlador : 42 : ConsultarComentariosInternos(publicCode)
+        activate Controlador
+        Controlador -[#black]> Usuario : 43 : VerificarPermiso(manage_incidents | view_important_incidents)
+        activate Usuario
+        Usuario --> Controlador : 44 : Autorizado
+        deactivate Usuario
+        Controlador -[#black]> Servicio : 45 : ListarComentarios(incidentId, INTERNAL)
+        activate Servicio
+        Servicio -[#black]> Comentario : 46 : ListarComentarios(incidentId, INTERNAL)
+        activate Comentario
+        Comentario --> Servicio : 47 : Comentarios internos
+        deactivate Comentario
+        Servicio --> Controlador : 48 : ComentariosInternos
+        deactivate Servicio
+        Controlador --> Vista : 49 : ComentariosInternos
+        deactivate Controlador
+    end
+
+    Vista --> Actor : 50 : MostrarSeguimientoYHistorial()
+    deactivate Vista
+
+end
+
+@enduml

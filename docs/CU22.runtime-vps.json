@@ -1,0 +1,17 @@
+{
+  "queue_ms": 13,
+  "worker_duration_ms": 1874,
+  "end_to_end_ms": 3703,
+  "category": "FIRE",
+  "priority": "HIGH",
+  "original_prediction_preserved": true,
+  "authenticated_http_status": 200,
+  "health_response_ms": [
+    20,
+    5,
+    4,
+    18,
+    5
+  ],
+  "synthetic_fixture_removed": true
+}

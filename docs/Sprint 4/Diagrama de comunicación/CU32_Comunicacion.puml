@@ -1,0 +1,21 @@
+@startuml
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Arial
+left to right direction
+title Diagrama de comunicación — CU32 Visión contextual
+object "Operador / revisor" as A
+object "Visor de Incidencias e IA" as I
+object "Muestreador local" as M
+object "API CU32" as D
+object "Trabajador visual" as W
+object "NVIDIA" as N
+object "Datos TAJI" as B
+A --> I : 1: iniciar webcam y consentir\n6: revisar o proponer
+I --> M : 2: comparar y seleccionar ventana
+I --> D : 3: encolar ventana\n5: consultar estado y antecedentes\n6.1: guardar revisión\n7: cerrar sesión
+D --> B : 3.1: validar sector y cuotas\n6.2: auditar decisión
+W --> B : 4: reclamar y retirar medio temporal\n4.3: guardar observación y referencias
+W --> N : 4.1: interpretar medio sin audio
+N --> W : 4.2: salida estructurada o error
+@enduml

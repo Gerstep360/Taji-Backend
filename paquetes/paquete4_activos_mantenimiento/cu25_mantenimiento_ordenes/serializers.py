@@ -239,7 +239,14 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
-    def get_assignee_name(self, order):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        tenant_id = TenantContext.get_current_tenant_id()
+        self.fields["asset_id"].queryset = tenant_assets(tenant_id)
+        self.fields["incident_id"].queryset = tenant_incidents(tenant_id)
+        self.fields["maintenance_plan_id"].queryset = tenant_plans(tenant_id)
+
+    def get_assignee_name(self, order) -> str:
         staff = order.current_assignee_staff
         return staff.person.full_name if staff and staff.person else ""
 

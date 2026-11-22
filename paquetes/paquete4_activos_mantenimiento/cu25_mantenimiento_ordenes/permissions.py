@@ -18,8 +18,8 @@ def role_permissions(user):
     membership = TenantContext.get_current_membership()
     if user.is_superuser:
         return MANAGEMENT_PERMISSIONS | WORKER_PERMISSIONS
-    role = membership.role if membership else None
-    if not role:
+    role = membership.role if membership and membership.user_id == user.pk and membership.is_active else None
+    if not role or not role.is_active:
         return set()
     return set(role.permissions.filter(is_active=True).values_list("code", flat=True))
 
