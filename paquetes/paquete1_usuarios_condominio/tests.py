@@ -22,19 +22,22 @@ class PackageRouteTests(SimpleTestCase):
 @skipUnless(connection.vendor == "postgresql", "PostgreSQL sequences only")
 class CondominiumSequenceMigrationTests(TransactionTestCase):
     def test_seeded_condominium_does_not_collide_with_next_automatic_id(self):
-        from condominiums.models import Condominium
-
         before = [("condominiums", "0004_sync_approved_residents")]
         after = [("condominiums", "0005_sync_condominium_sequence")]
         executor = MigrationExecutor(connection)
-        executor.migrate(before)
+        latest = executor.loader.graph.leaf_nodes()
         try:
+            executor.migrate(before)
+            # El modelo actual incluye campos SaaS que aún no existían en 0004.
+            Condominium = executor.loader.project_state(before).apps.get_model("condominiums", "Condominium")
             seed, _ = Condominium.objects.get_or_create(pk=1, defaults={"name": "Taji"})
             with connection.cursor() as cursor:
                 cursor.execute("SELECT setval(pg_get_serial_sequence('condominium', 'id'), 1, false)")
-            MigrationExecutor(connection).migrate(after)
+            migrated = MigrationExecutor(connection)
+            migrated.migrate(after)
+            Condominium = migrated.loader.project_state(after).apps.get_model("condominiums", "Condominium")
             created = Condominium.objects.create(name="Secuencia verificada")
             self.assertGreater(created.pk, seed.pk)
             self.assertTrue(Condominium.objects.filter(pk=seed.pk).exists())
         finally:
-            MigrationExecutor(connection).migrate(after)
+            MigrationExecutor(connection).migrate(latest)
