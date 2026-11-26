@@ -140,6 +140,12 @@ CORS_ALLOWED_ORIGIN_REGEXES = (
 )
 CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "x-tenant-id",
+]
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["accounts.authentication.CookieJWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
